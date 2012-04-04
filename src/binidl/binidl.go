@@ -47,6 +47,18 @@ func marshalField(fname, tname, pred string) {
 		b(8)
 		bs("binary.LittleEndian.PutUint64", "uint64", f)
 		wbs()
+	case "int32", "uint32":
+		b(4)
+		bs("binary.LittleEndian.PutUint32", "uint32", f)
+		wbs()
+	case "int16", "uint16":
+		b(2)
+		bs("binary.LittleEndian.PutUint16", "uint16", f)
+		wbs()
+	case "int8", "uint8":
+		b(1)
+		fmt.Printf("\tb[0] = byte(%s)\n", f)
+		wbs()
 	default:
 		fmt.Printf("\tMarshal%s(&%s, w)\n", tname, f)
 	}
