@@ -1,0 +1,6 @@
+Generates code to handle marshaling and unmarshaling to/from 
+encoding/binary.
+
+Does not work well yet.  In fact, doesn't even generate
+unmarshaling code yet.  And only handles integers.
+Only 64 bit integers.  But gotta start somewhere.
