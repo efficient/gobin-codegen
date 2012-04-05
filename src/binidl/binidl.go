@@ -70,47 +70,6 @@ func unmarshalField(fname, tname string) {
 	}
 }
 
-// silly.  This completely duplicates marshalContents.  Fix me, Dave.
-func walkContents(st *ast.StructType, pred string, fn func(*ast.Field, string)) {
-	for _, f := range st.Fields.List {
-		fname := f.Names[0].Name
-		newpred := pred+"."+fname
-		fn(f, newpred)
-	}
-}
-
-func unmarshalOne(f *ast.Field, pred string) {
-	switch f.Type.(type) {
-	case *ast.Ident:
-		t := f.Type.(*ast.Ident)
-		unmarshalField(pred, t.Name)
-	case *ast.SelectorExpr:
-		se := f.Type.(*ast.SelectorExpr)
-		fmt.Printf("\t%s.Unmarshal%s(&%s, w)\n",
-			se.X, se.Sel.Name, pred)
-	case *ast.ArrayType:
-		s := f.Type.(*ast.ArrayType)
-		e, ok := s.Len.(*ast.BasicLit)
-		if !ok {
-			panic("Bad literal in array decl")
-		}
-		
-		len, _ := strconv.Atoi(e.Value) // check the error, lazybones
-		//fmt.Println("Array len: ", len)
-		for i := 0; i < len; i++ {
-			fsub := fmt.Sprintf("%s[%d]", pred, i)
-			pseudofield := &ast.Field{nil, nil, s.Elt, nil, nil}
-			//fmt.Println("PF: ", pseudofield)
-			unmarshalOne(pseudofield, fsub)
-			//fmt.Println("Type of elt: ", reflect.TypeOf(s.Elt))
-			//unmarshalContents(s.Elt
-			//unmarshalField(fsub, elt.Name, pred)
-		}
-	default:
-		panic("Unknown type in struct")
-	}
-}
-
 func marshalField(fname, tname string) {
 	switch tname {
 	case "int", "int64", "uint64":
@@ -135,15 +94,23 @@ func marshalField(fname, tname string) {
 }
 
 
-func marshalOne(f *ast.Field, pred string) {
+func walkContents(st *ast.StructType, pred string, funcname string, fn func(string, string)) {
+	for _, f := range st.Fields.List {
+		fname := f.Names[0].Name
+		newpred := pred+"."+fname
+		walkOne(f, newpred, funcname, fn)
+	}
+}
+
+func walkOne(f *ast.Field, pred string, funcname string, fn func(string, string)) {
 	switch f.Type.(type) {
 	case *ast.Ident:
 		t := f.Type.(*ast.Ident)
-		marshalField(pred, t.Name)
+		fn(pred, t.Name)
 	case *ast.SelectorExpr:
 		se := f.Type.(*ast.SelectorExpr)
-		fmt.Printf("\t%s.Marshal%s(&%s, w)\n",
-			se.X, se.Sel.Name, pred)
+		fmt.Printf("\t%s.%s%s(&%s, w)\n",
+			se.X, funcname, se.Sel.Name, pred)
 	case *ast.ArrayType:
 		s := f.Type.(*ast.ArrayType)
 		e, ok := s.Len.(*ast.BasicLit)
@@ -152,10 +119,15 @@ func marshalOne(f *ast.Field, pred string) {
 		}
 		
 		len, _ := strconv.Atoi(e.Value) // check the error, lazybones
+		//fmt.Println("Array len: ", len)
 		for i := 0; i < len; i++ {
 			fsub := fmt.Sprintf("%s[%d]", pred, i)
 			pseudofield := &ast.Field{nil, nil, s.Elt, nil, nil}
-			marshalOne(pseudofield, fsub)
+			//fmt.Println("PF: ", pseudofield)
+			walkOne(pseudofield, fsub, funcname, fn)
+			//fmt.Println("Type of elt: ", reflect.TypeOf(s.Elt))
+			//unmarshalContents(s.Elt
+			//unmarshalField(fsub, elt.Name, pred)
 		}
 	default:
 		panic("Unknown type in struct")
@@ -184,13 +156,13 @@ func structmap(n interface{}) {
 	fmt.Println("\tvar b [8]byte")
 	fmt.Println("\tbs := b[:8]")
 	//fmt.Printf("tstype: ", reflect.TypeOf(ts.Type))
-	walkContents(st, "t", marshalOne)
+	walkContents(st, "t", "Marshal", marshalField)
 	fmt.Println("}\n")
 
 	fmt.Printf("func Unmarshal%s(t *%s, r io.Reader) error {\n", typeName, typeName)
 	fmt.Println("\tvar b [8]byte")
 	fmt.Println("\tvar bs []byte")
-	walkContents(st, "t", unmarshalOne)
+	walkContents(st, "t", "Unmarshal", unmarshalField)
 	fmt.Println("\treturn nil\n}\n")
 	return
 }
