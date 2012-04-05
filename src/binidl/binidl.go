@@ -57,7 +57,11 @@ func c(fname, tname, orderconvert string, pad string) {
 }
 
 func unmarshalField(fname, tname, pad string) {
-	switch tname {
+	tconv := tname
+	if mapped, ok := typemap[tname]; ok {
+		tconv = mapped
+	}
+	switch tconv {
 	case "int", "int64", "uint64":
 		r(8, pad)
 		c(fname, tname, "Uint64", pad)
@@ -76,6 +80,10 @@ func unmarshalField(fname, tname, pad string) {
 }
 
 func marshalField(fname, tname, pad string) {
+	if mapped, ok := typemap[tname]; ok {
+		tname = mapped
+	}
+
 	switch tname {
 	case "int", "int64", "uint64":
 		b(8, pad)
@@ -134,7 +142,7 @@ func walkOne(f *ast.Field, pred string, funcname string, fn func(string, string,
 		//se := f.Type.(*ast.SelectorExpr)
 		//fmt.Printf("%s%s.%s%s(&%s, w)\n",
 		//	pad, se.X, funcname, se.Sel.Name, pred)
-        fmt.Printf("%s%s.%s(%s)\n",
+		fmt.Printf("%s%s.%s(%s)\n",
 			pad, pred, funcname, ioid)
 	case *ast.ArrayType:
 		s := f.Type.(*ast.ArrayType)
@@ -162,6 +170,11 @@ func walkOne(f *ast.Field, pred string, funcname string, fn func(string, string,
 	}
 }
 
+var typemap map[string]string = make(map[string]string)
+var native_type map[string]bool = map[string]bool { "int64":true,
+	"uint64":true, "int":true, "int32":true, "uint32":true,
+	"int16":true, "uint16":true, "int8":true, "uint8":true, }
+
 func structmap(n interface{}) {
 	decl, ok := n.(*ast.GenDecl)
 	if !ok {
@@ -176,7 +189,15 @@ func structmap(n interface{}) {
 	typeName := ts.Name.Name
 	st, ok := ts.Type.(*ast.StructType)
 	if !ok {
-		return
+		//fmt.Println("Type of type is ", reflect.TypeOf(ts.Type))
+		if id, ok := ts.Type.(*ast.Ident); ok {
+			tname := id.Name
+			if native_type[tname] {
+				typemap[typeName] = tname
+				return
+			}
+		}
+		panic("Can't handle decl!")
 	}
 
 	//fmt.Println("ts: ", typeName)
