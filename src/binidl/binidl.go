@@ -40,6 +40,31 @@ func wbs() {
 	fmt.Println("\tw.Write(bs)")
 }
 
+func r(n int) {
+	fmt.Printf("\tReading %d\n", n)
+}
+
+func unmarshalField(fname, tname, pred string) {
+	f := pred + "." + fname
+	switch tname {
+	case "int", "int64", "uint64":
+		r(8)
+	case "int32", "uint32":
+		r(4)
+	case "int16", "uint16":
+		r(2)
+	case "int8", "uint8":
+		r(1)
+	default:
+		fmt.Printf("\tUnmarshal%s(&%s, w)\n", tname, f)
+	}
+	fmt.Println("Hi, I don't do this yet: ", f)
+}
+
+func unmarshalContents(ts *ast.TypeSpec, pred string) {
+	fmt.Println("\tNot implemented yet")
+}
+
 func marshalField(fname, tname, pred string) {
 	f := pred + "." + fname
 	switch tname {
@@ -72,11 +97,20 @@ func marshalContents(ts *ast.TypeSpec, pred string) {
 		//fmt.Println("Hey, a struct.  Recurse on its contents.")
 		for _, f := range st.Fields.List {
 			fname := f.Names[0].Name
-			t := f.Type.(*ast.Ident)
+			switch f.Type.(type) {
+			case *ast.Ident:
+				t := f.Type.(*ast.Ident)
+				marshalField(fname, t.Name, pred)
+			case *ast.SelectorExpr:
+				se := f.Type.(*ast.SelectorExpr)
+				fmt.Printf("\t%s.Marshal%s(&%s, w)\n",
+					se.X, se.Sel.Name, pred+"."+fname)
+				
+			}
+
 			//fmt.Println("obj: ", t.Obj)
 			//fmt.Println("t: ", t)
 			//fmt.Println("Field ", fname, " (", f, ") type ", reflect.TypeOf(f.Type))
-			marshalField(fname, t.Name, pred)
 		}
 	default:
 		panic("Don't know how to handle this type yet")
@@ -101,6 +135,12 @@ func structmap(n interface{}) {
 	fmt.Println("\tbs := b[:8]")
 	//fmt.Printf("tstype: ", reflect.TypeOf(ts.Type))
 	marshalContents(ts, "t")
+	fmt.Println("}\n")
+
+	fmt.Printf("func Unmarshal%s(t *%s, r io.Reader) {\n", typeName, typeName)
+	fmt.Println("\tvar b [8]byte")
+	fmt.Println("\tvar bs []byte")
+	unmarshalContents(ts, "t")
 	fmt.Println("}\n")
 	return
 }
