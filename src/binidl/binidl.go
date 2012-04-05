@@ -169,11 +169,11 @@ func structmap(n interface{}) {
 	marshalContents(ts, "t")
 	fmt.Println("}\n")
 
-	fmt.Printf("func Unmarshal%s(t *%s, r io.Reader) {\n", typeName, typeName)
+	fmt.Printf("func Unmarshal%s(t *%s, r io.Reader) error {\n", typeName, typeName)
 	fmt.Println("\tvar b [8]byte")
 	fmt.Println("\tvar bs []byte")
 	unmarshalContents(ts, "t")
-	fmt.Println("}\n")
+	fmt.Println("\treturn nil\n}\n")
 	return
 }
 
