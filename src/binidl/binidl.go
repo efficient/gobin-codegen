@@ -92,7 +92,7 @@ func marshalField(fname, tname, pad string) {
 		fmt.Printf("%sb[0] = byte(%s)\n", pad, fname)
 		wbs(pad)
 	default:
-		fmt.Printf("%s%s.Marshal%s(w)\n", pad, fname)
+		fmt.Printf("%s%s.Marshal(w)\n", pad, fname)
 	}
 }
 
