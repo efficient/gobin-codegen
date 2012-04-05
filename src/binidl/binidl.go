@@ -41,7 +41,13 @@ func wbs() {
 }
 
 func r(n int) {
-	fmt.Printf("\tReading %d\n", n)
+	b(n)
+	fmt.Println("\tif _, err := io.ReadFull(r, bs); err != nil {")
+	fmt.Println("\t\treturn err\n\t}")
+}
+
+func c(f, tname, orderconvert string) {
+	fmt.Printf("\t%s = %s(binary.LittleEndian.%s(bs))\n", f, tname, orderconvert)
 }
 
 func unmarshalField(fname, tname, pred string) {
@@ -49,20 +55,46 @@ func unmarshalField(fname, tname, pred string) {
 	switch tname {
 	case "int", "int64", "uint64":
 		r(8)
+		c(f, tname, "Uint64")
 	case "int32", "uint32":
 		r(4)
+		c(f, tname, "Uint32")
 	case "int16", "uint16":
 		r(2)
+		c(f, tname, "Uint16")
 	case "int8", "uint8":
 		r(1)
+		fmt.Printf("\t%s = b[0]\n", f)
 	default:
 		fmt.Printf("\tUnmarshal%s(&%s, w)\n", tname, f)
 	}
-	fmt.Println("Hi, I don't do this yet: ", f)
 }
 
+// silly.  This completely duplicates marshalContents.  Fix me, Dave.
 func unmarshalContents(ts *ast.TypeSpec, pred string) {
-	fmt.Println("\tNot implemented yet")
+	switch ts.Type.(type) {
+	case *ast.StructType:
+		st := ts.Type.(*ast.StructType)
+		for _, f := range st.Fields.List {
+			fname := f.Names[0].Name
+			switch f.Type.(type) {
+			case *ast.Ident:
+				t := f.Type.(*ast.Ident)
+				unmarshalField(fname, t.Name, pred)
+			case *ast.SelectorExpr:
+				se := f.Type.(*ast.SelectorExpr)
+				fmt.Printf("\t%s.Unmarshal%s(&%s, w)\n",
+					se.X, se.Sel.Name, pred+"."+fname)
+				
+			}
+
+			//fmt.Println("obj: ", t.Obj)
+			//fmt.Println("t: ", t)
+			//fmt.Println("Field ", fname, " (", f, ") type ", reflect.TypeOf(f.Type))
+		}
+	default:
+		panic("Don't know how to handle this type yet")
+	}
 }
 
 func marshalField(fname, tname, pred string) {
