@@ -8,6 +8,6 @@ handles corner cases well.  You get the idea. :)
 use:
   export GOPATH=`/bin/pwd`
   go install bi
-  bin/bi /path/to/your/go/struct/decl.go > generated_code.go
+  bin/bi /path/to/your/go/struct/decl.go | gofmt > generated_code.go
 
   use generated_code.go as you see fit.
