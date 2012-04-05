@@ -66,9 +66,9 @@ func unmarshalField(fname, tname, pad string) {
 		c(fname, tname, "Uint16", pad)
 	case "int8", "uint8":
 		r(1, pad)
-		fmt.Printf("\t%s = b[0]\n", fname, pad)
+		fmt.Printf("%s%s = b[0]\n", pad, fname)
 	default:
-		fmt.Printf("%sUnmarshal%s(&%s, w)\n", pad, tname, fname)
+		fmt.Printf("%s%s.Unmarshal(w)\n", pad, fname)
 	}
 }
 
@@ -91,7 +91,7 @@ func marshalField(fname, tname, pad string) {
 		fmt.Printf("%sb[0] = byte(%s)\n", pad, fname)
 		wbs(pad)
 	default:
-		fmt.Printf("%sMarshal%s(&%s, w)\n", pad, tname, fname)
+		fmt.Printf("%s%s.Marshal%s(w)\n", pad, fname)
 	}
 }
 
@@ -124,9 +124,11 @@ func walkOne(f *ast.Field, pred string, funcname string, fn func(string, string,
 		t := f.Type.(*ast.Ident)
 		fn(pred, t.Name, pad)
 	case *ast.SelectorExpr:
-		se := f.Type.(*ast.SelectorExpr)
-		fmt.Printf("%s%s.%s%s(&%s, w)\n",
-			pad, se.X, funcname, se.Sel.Name, pred)
+		//se := f.Type.(*ast.SelectorExpr)
+		//fmt.Printf("%s%s.%s%s(&%s, w)\n",
+		//	pad, se.X, funcname, se.Sel.Name, pred)
+        fmt.Printf("%s%s.%s(w)\n",
+			pad, pred, funcname)
 	case *ast.ArrayType:
 		s := f.Type.(*ast.ArrayType)
 		e, ok := s.Len.(*ast.BasicLit)
@@ -171,7 +173,7 @@ func structmap(n interface{}) {
 	}
 
 	//fmt.Println("ts: ", typeName)
-	fmt.Printf("func Marshal%s(t *%s, w io.Writer) {\n", typeName, typeName)
+	fmt.Printf("func (t *%s) Marshal(w io.Writer) {\n", typeName)
 	fmt.Println("\tvar b [8]byte")
 	fmt.Println("\tbs := b[:8]")
 	resetb()
@@ -180,7 +182,7 @@ func structmap(n interface{}) {
 	fmt.Println("}\n")
 
 
-	fmt.Printf("func Unmarshal%s(t *%s, r io.Reader) error {\n", typeName, typeName)
+	fmt.Printf("func (t *%s) Unmarshal(r io.Reader) error {\n", typeName)
 	fmt.Println("\tvar b [8]byte")
 	fmt.Println("\tbs := b[:8]")
 	resetb()
