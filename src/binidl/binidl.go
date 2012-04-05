@@ -21,6 +21,7 @@ func NewBinidl(filename string) *Binidl {
 		fmt.Println("Error parsing", filename, ":", err)
 		return nil
 	}
+	fmt.Println("package ", ast.Name.Name)
 	return &Binidl{ast, fset}
 }
 
