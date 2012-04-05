@@ -31,11 +31,20 @@ func (bf *Binidl) Visit(n ast.Node) ast.Visitor {
 	return bf
 }
 
-func b(n int) {
-	fmt.Printf("\tbs = b[:%d]\n", n)
+var cur_b_marshal_state int = 0
+
+func resetb() {
+	cur_b_marshal_state = 8
 }
-func bs(x, y, z string) {
-	fmt.Printf("\t%s(bs, %s(%s))\n", x, y, z)
+
+func b(n int) {
+	if (n != cur_b_marshal_state) {
+		fmt.Printf("\tbs = b[:%d]\n", n)
+	}
+	cur_b_marshal_state = n
+}
+func bs(fname, tname, orderconvert string) {
+	fmt.Printf("\tbinary.LittleEndian.Put%s(bs, %s(%s))\n", orderconvert, tname, fname)
 }
 func wbs() {
 	fmt.Println("\tw.Write(bs)")
@@ -47,8 +56,8 @@ func r(n int) {
 	fmt.Println("\t\treturn err\n\t}")
 }
 
-func c(f, tname, orderconvert string) {
-	fmt.Printf("\t%s = %s(binary.LittleEndian.%s(bs))\n", f, tname, orderconvert)
+func c(fname, tname, orderconvert string) {
+	fmt.Printf("\t%s = %s(binary.LittleEndian.%s(bs))\n", fname, tname, orderconvert)
 }
 
 func unmarshalField(fname, tname string) {
@@ -74,15 +83,15 @@ func marshalField(fname, tname string) {
 	switch tname {
 	case "int", "int64", "uint64":
 		b(8)
-		bs("binary.LittleEndian.PutUint64", "uint64", fname)
+		bs(fname, "uint64", "Uint64")
 		wbs()
 	case "int32", "uint32":
 		b(4)
-		bs("binary.LittleEndian.PutUint32", "uint32", fname)
+		bs(fname, "uint32", "Uint32")
 		wbs()
 	case "int16", "uint16":
 		b(2)
-		bs("binary.LittleEndian.PutUint16", "uint16", fname)
+		bs(fname, "uint16", "Uint16")
 		wbs()
 	case "int8", "uint8":
 		b(1)
@@ -155,13 +164,16 @@ func structmap(n interface{}) {
 	fmt.Printf("func Marshal%s(t *%s, w io.Writer) {\n", typeName, typeName)
 	fmt.Println("\tvar b [8]byte")
 	fmt.Println("\tbs := b[:8]")
+	resetb()
 	//fmt.Printf("tstype: ", reflect.TypeOf(ts.Type))
 	walkContents(st, "t", "Marshal", marshalField)
 	fmt.Println("}\n")
 
+
 	fmt.Printf("func Unmarshal%s(t *%s, r io.Reader) error {\n", typeName, typeName)
 	fmt.Println("\tvar b [8]byte")
-	fmt.Println("\tvar bs []byte")
+	fmt.Println("\tbs := b[:8]")
+	resetb()
 	walkContents(st, "t", "Unmarshal", unmarshalField)
 	fmt.Println("\treturn nil\n}\n")
 	return
