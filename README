@@ -1,0 +1,13 @@
+Generates code to handle marshaling and unmarshaling to/from 
+encoding/binary.
+
+Probably isn't nearly as general as you'd like it to be.
+Don't depend on it working properly.  Don't think that it
+handles corner cases well.  You get the idea. :)
+
+use:
+  export GOPATH=`/bin/pwd`
+  go install bi
+  bin/bi /path/to/your/go/struct/decl.go > generated_code.go
+
+  use generated_code.go as you see fit.
