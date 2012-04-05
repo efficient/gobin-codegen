@@ -23,7 +23,7 @@ func NewBinidl(filename string) *Binidl {
 	}
 	fmt.Println("package", ast.Name.Name)
     fmt.Println("")
-    fmt.Println("import (\n\t\"io\"\n\t\"encoding/binary\"\n)\n")
+    fmt.Println("import (\n\t\"io\"\n\t\"bufio\"\n\t\"encoding/binary\"\n)\n")
 	return &Binidl{ast, fset}
 }
 
@@ -71,9 +71,9 @@ func unmarshalField(fname, tname, pad string) {
 	case "int16", "uint16":
 		r(2, pad)
 		c(fname, tname, "Uint16", pad)
-	case "int8", "uint8":
+	case "int8", "uint8", "byte":
 		r(1, pad)
-		fmt.Printf("%s%s = b[0]\n", pad, fname)
+		fmt.Printf("%s%s = %s(b[0])\n", pad, fname, tname)
 	default:
 		fmt.Printf("%s%s.Unmarshal(r)\n", pad, fname)
 	}
@@ -97,7 +97,7 @@ func marshalField(fname, tname, pad string) {
 		b(2, pad)
 		bs(fname, "uint16", "Uint16", pad)
 		wbs(pad)
-	case "int8", "uint8":
+	case "int8", "uint8", "byte":
 		b(1, pad)
 		fmt.Printf("%sb[0] = byte(%s)\n", pad, fname)
 		wbs(pad)
@@ -152,18 +152,18 @@ func walkOne(f *ast.Field, pred string, funcname string, fn func(string, string,
 			// If we are unmarshaling we need to allocate.
 			if ioid == "r" {
 				fmt.Printf("%slen, err := binary.ReadVarint(r)\n", pad)
-				fmt.Printf("%sif err {\n", pad)
+				fmt.Printf("%sif err != nil {\n", pad)
 				fmt.Printf("%s\treturn err\n", pad)
 				fmt.Printf("%s}\n", pad)
 				fmt.Printf("%s%s = make([]%s, len)\n", pad, pred, s.Elt)
 			} else {
 				b(10, pad)
-				fmt.Printf("%slen := len(%s)\n", pad, pred)
+				fmt.Printf("%slen := int64(len(%s))\n", pad, pred)
 				fmt.Printf("%sif wlen := binary.PutVarint(bs, len); wlen >= 0 {\n", pad)
 				fmt.Printf("%s\tw.Write(b[0:wlen])\n", pad)
 				fmt.Printf("%s}\n", pad)
 			}
-			fmt.Printf("%sfor %s := 0; %s < len; %s++ {\n", pad, i, i, i)
+			fmt.Printf("%sfor %s := int64(0); %s < len; %s++ {\n", pad, i, i, i)
 		} else {
 			e, ok := s.Len.(*ast.BasicLit)
 			if !ok {
@@ -226,8 +226,11 @@ func structmap(n interface{}) {
 	walkContents(st, "t", "Marshal", marshalField)
 	fmt.Println("}\n")
 
-
-	fmt.Printf("func (t *%s) Unmarshal(r io.Reader) error {\n", typeName)
+	// This is a good thing to optimize in the future:  Adding a bufio slows
+	// unmarshaling down by a fair bit and is only needed for certain types
+	// of structs.
+	fmt.Printf("func (t *%s) Unmarshal(rr io.Reader) error {\n", typeName)
+	fmt.Println("\tr := bufio.NewReader(rr)\n")
 	fmt.Println("\tvar b [10]byte")
 	fmt.Println("\tbs := b[:10]")
 	resetb()
