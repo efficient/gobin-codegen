@@ -30,7 +30,7 @@ func NewBinidl(filename string) *Binidl {
 var cur_b_marshal_state int = 0
 
 func resetb() {
-	cur_b_marshal_state = 8
+	cur_b_marshal_state = 10
 }
 
 func b(n int, pad string) {
@@ -146,23 +146,40 @@ func walkOne(f *ast.Field, pred string, funcname string, fn func(string, string,
 			pad, pred, funcname, ioid)
 	case *ast.ArrayType:
 		s := f.Type.(*ast.ArrayType)
-		e, ok := s.Len.(*ast.BasicLit)
-		if !ok {
-			panic("Bad literal in array decl")
+		i := get_index_str()
+		fmt.Printf("%s{\n", pad)
+		if s.Len == nil {
+			// If we are unmarshaling we need to allocate.
+			if ioid == "r" {
+				fmt.Printf("%slen, err := binary.ReadVarint(r)\n", pad)
+				fmt.Printf("%sif err {\n", pad)
+				fmt.Printf("%s\treturn err\n", pad)
+				fmt.Printf("%s}\n", pad)
+				fmt.Printf("%s%s = make([]%s, len)\n", pad, pred, s.Elt)
+			} else {
+				b(10, pad)
+				fmt.Printf("%slen := len(%s)\n", pad, pred)
+				fmt.Printf("%sif wlen := binary.PutVarint(bs, len); wlen >= 0 {\n", pad)
+				fmt.Printf("%s\tw.Write(b[0:wlen])\n", pad)
+				fmt.Printf("%s}\n", pad)
+			}
+			fmt.Printf("%sfor %s := 0; %s < len; %s++ {\n", pad, i, i, i)
+		} else {
+			e, ok := s.Len.(*ast.BasicLit)
+			if !ok {
+				panic("Bad literal in array decl")
+			}
+			len, err := strconv.Atoi(e.Value)
+			if err != nil {
+				panic("Bad array length value.  Must be a simple int.")
+			}
+			fmt.Printf("%sfor %s := 0; %s < %d; %s++ {\n", pad, i, i, len, i)
 		}
 		
-		len, err := strconv.Atoi(e.Value)
-		if err != nil {
-			panic("Bad array length value.  Must be a simple int.")
-		}
-		i := get_index_str()
-		fmt.Printf("%sfor %s := 0; %s < %d; %s++ {\n", pad, i, i, len, i)
-
-		// Might want to unroll if len is only 2.
-		//for i := 0; i < len; i++ {
 		fsub := fmt.Sprintf("%s[%s]", pred, i)
 		pseudofield := &ast.Field{nil, nil, s.Elt, nil, nil}
 		walkOne(pseudofield, fsub, funcname, fn, pad+"\t")
+		fmt.Printf("%s}\n", pad)
 		fmt.Printf("%s}\n", pad)
 		free_index_str()
 	default:
@@ -202,8 +219,8 @@ func structmap(n interface{}) {
 
 	//fmt.Println("ts: ", typeName)
 	fmt.Printf("func (t *%s) Marshal(w io.Writer) {\n", typeName)
-	fmt.Println("\tvar b [8]byte")
-	fmt.Println("\tbs := b[:8]")
+	fmt.Println("\tvar b [10]byte")
+	fmt.Println("\tbs := b[:10]")
 	resetb()
 	//fmt.Printf("tstype: ", reflect.TypeOf(ts.Type))
 	walkContents(st, "t", "Marshal", marshalField)
@@ -211,8 +228,8 @@ func structmap(n interface{}) {
 
 
 	fmt.Printf("func (t *%s) Unmarshal(r io.Reader) error {\n", typeName)
-	fmt.Println("\tvar b [8]byte")
-	fmt.Println("\tbs := b[:8]")
+	fmt.Println("\tvar b [10]byte")
+	fmt.Println("\tbs := b[:10]")
 	resetb()
 	walkContents(st, "t", "Unmarshal", unmarshalField)
 	fmt.Println("\treturn nil\n}\n")
