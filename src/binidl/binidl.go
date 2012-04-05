@@ -199,7 +199,9 @@ func structmap(n interface{}) {
 }
 
 func (bf *Binidl) PrintGo() {
-	walk(bf.ast, structmap)
+	for _, d := range bf.ast.Decls {
+		structmap(d)
+	}
 }
 
 func let_me_keep_reflect_loaded_please() {
