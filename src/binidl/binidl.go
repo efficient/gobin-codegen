@@ -5,8 +5,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	//	"go/scanner"
-	//"go/printer"
 	"reflect"
 	"strconv"
 )
@@ -26,100 +24,109 @@ func NewBinidl(filename string) *Binidl {
 	return &Binidl{ast, fset}
 }
 
-func (bf *Binidl) Visit(n ast.Node) ast.Visitor {
-	fmt.Println("Visiting ", n)
-	return bf
-}
-
 var cur_b_marshal_state int = 0
 
 func resetb() {
 	cur_b_marshal_state = 8
 }
 
-func b(n int) {
+func b(n int, pad string) {
 	if (n != cur_b_marshal_state) {
-		fmt.Printf("\tbs = b[:%d]\n", n)
+		fmt.Printf("%sbs = b[:%d]\n", pad, n)
 	}
 	cur_b_marshal_state = n
 }
-func bs(fname, tname, orderconvert string) {
-	fmt.Printf("\tbinary.LittleEndian.Put%s(bs, %s(%s))\n", orderconvert, tname, fname)
+func bs(fname, tname, orderconvert string, pad string) {
+	fmt.Printf("%sbinary.LittleEndian.Put%s(bs, %s(%s))\n", pad, orderconvert, tname, fname)
 }
-func wbs() {
-	fmt.Println("\tw.Write(bs)")
-}
-
-func r(n int) {
-	b(n)
-	fmt.Println("\tif _, err := io.ReadFull(r, bs); err != nil {")
-	fmt.Println("\t\treturn err\n\t}")
+func wbs(pad string) {
+	fmt.Printf("%sw.Write(bs)\n", pad)
 }
 
-func c(fname, tname, orderconvert string) {
-	fmt.Printf("\t%s = %s(binary.LittleEndian.%s(bs))\n", fname, tname, orderconvert)
+func r(n int, pad string) {
+	b(n, pad)
+	fmt.Printf("%sif _, err := io.ReadFull(r, bs); err != nil {\n", pad)
+	fmt.Printf("%s\treturn err\n%s}\n", pad, pad)
 }
 
-func unmarshalField(fname, tname string) {
+func c(fname, tname, orderconvert string, pad string) {
+	fmt.Printf("%s%s = %s(binary.LittleEndian.%s(bs))\n", pad, fname, tname, orderconvert)
+}
+
+func unmarshalField(fname, tname, pad string) {
 	switch tname {
 	case "int", "int64", "uint64":
-		r(8)
-		c(fname, tname, "Uint64")
+		r(8, pad)
+		c(fname, tname, "Uint64", pad)
 	case "int32", "uint32":
-		r(4)
-		c(fname, tname, "Uint32")
+		r(4, pad)
+		c(fname, tname, "Uint32", pad)
 	case "int16", "uint16":
-		r(2)
-		c(fname, tname, "Uint16")
+		r(2, pad)
+		c(fname, tname, "Uint16", pad)
 	case "int8", "uint8":
-		r(1)
-		fmt.Printf("\t%s = b[0]\n", fname)
+		r(1, pad)
+		fmt.Printf("\t%s = b[0]\n", fname, pad)
 	default:
-		fmt.Printf("\tUnmarshal%s(&%s, w)\n", tname, fname)
+		fmt.Printf("%sUnmarshal%s(&%s, w)\n", pad, tname, fname)
 	}
 }
 
-func marshalField(fname, tname string) {
+func marshalField(fname, tname, pad string) {
 	switch tname {
 	case "int", "int64", "uint64":
-		b(8)
-		bs(fname, "uint64", "Uint64")
-		wbs()
+		b(8, pad)
+		bs(fname, "uint64", "Uint64", pad)
+		wbs(pad)
 	case "int32", "uint32":
-		b(4)
-		bs(fname, "uint32", "Uint32")
-		wbs()
+		b(4, pad)
+		bs(fname, "uint32", "Uint32", pad)
+		wbs(pad)
 	case "int16", "uint16":
-		b(2)
-		bs(fname, "uint16", "Uint16")
-		wbs()
+		b(2, pad)
+		bs(fname, "uint16", "Uint16", pad)
+		wbs(pad)
 	case "int8", "uint8":
-		b(1)
-		fmt.Printf("\tb[0] = byte(%s)\n", fname)
-		wbs()
+		b(1, pad)
+		fmt.Printf("%sb[0] = byte(%s)\n", pad, fname)
+		wbs(pad)
 	default:
-		fmt.Printf("\tMarshal%s(&%s, w)\n", tname, fname)
+		fmt.Printf("%sMarshal%s(&%s, w)\n", pad, tname, fname)
 	}
 }
 
 
-func walkContents(st *ast.StructType, pred string, funcname string, fn func(string, string)) {
+func walkContents(st *ast.StructType, pred string, funcname string, fn func(string, string, string)) {
 	for _, f := range st.Fields.List {
 		fname := f.Names[0].Name
 		newpred := pred+"."+fname
-		walkOne(f, newpred, funcname, fn)
+		walkOne(f, newpred, funcname, fn, "\t")
 	}
 }
 
-func walkOne(f *ast.Field, pred string, funcname string, fn func(string, string)) {
+var index_depth int = 0
+func get_index_str() string {
+	indexes := []string{"i", "j", "k", "ii", "jj", "kk"}
+	if index_depth > 5 {
+		panic("Array nesting depth too large.  Lazy programmer bites again.")
+	}
+	i := index_depth
+	index_depth++
+	return indexes[i]
+}
+func free_index_str() {
+	index_depth--
+}
+
+func walkOne(f *ast.Field, pred string, funcname string, fn func(string, string, string), pad string) {
 	switch f.Type.(type) {
 	case *ast.Ident:
 		t := f.Type.(*ast.Ident)
-		fn(pred, t.Name)
+		fn(pred, t.Name, pad)
 	case *ast.SelectorExpr:
 		se := f.Type.(*ast.SelectorExpr)
-		fmt.Printf("\t%s.%s%s(&%s, w)\n",
-			se.X, funcname, se.Sel.Name, pred)
+		fmt.Printf("%s%s.%s%s(&%s, w)\n",
+			pad, se.X, funcname, se.Sel.Name, pred)
 	case *ast.ArrayType:
 		s := f.Type.(*ast.ArrayType)
 		e, ok := s.Len.(*ast.BasicLit)
@@ -127,17 +134,20 @@ func walkOne(f *ast.Field, pred string, funcname string, fn func(string, string)
 			panic("Bad literal in array decl")
 		}
 		
-		len, _ := strconv.Atoi(e.Value) // check the error, lazybones
-		//fmt.Println("Array len: ", len)
-		for i := 0; i < len; i++ {
-			fsub := fmt.Sprintf("%s[%d]", pred, i)
-			pseudofield := &ast.Field{nil, nil, s.Elt, nil, nil}
-			//fmt.Println("PF: ", pseudofield)
-			walkOne(pseudofield, fsub, funcname, fn)
-			//fmt.Println("Type of elt: ", reflect.TypeOf(s.Elt))
-			//unmarshalContents(s.Elt
-			//unmarshalField(fsub, elt.Name, pred)
+		len, err := strconv.Atoi(e.Value)
+		if err != nil {
+			panic("Bad array length value.  Must be a simple int.")
 		}
+		i := get_index_str()
+		fmt.Printf("%sfor %s := 0; %s < %d; %s++ {\n", pad, i, i, len, i)
+
+		// Might want to unroll if len is only 2.
+		//for i := 0; i < len; i++ {
+		fsub := fmt.Sprintf("%s[%s]", pred, i)
+		pseudofield := &ast.Field{nil, nil, s.Elt, nil, nil}
+		walkOne(pseudofield, fsub, funcname, fn, pad+"\t")
+		fmt.Printf("%s}\n", pad)
+		free_index_str()
 	default:
 		panic("Unknown type in struct")
 	}
