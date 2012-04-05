@@ -21,7 +21,9 @@ func NewBinidl(filename string) *Binidl {
 		fmt.Println("Error parsing", filename, ":", err)
 		return nil
 	}
-	fmt.Println("package ", ast.Name.Name)
+	fmt.Println("package", ast.Name.Name)
+    fmt.Println("")
+    fmt.Println("import (\n\t\"io\"\n\t\"encoding/binary\"\n)\n")
 	return &Binidl{ast, fset}
 }
 
@@ -69,7 +71,7 @@ func unmarshalField(fname, tname, pad string) {
 		r(1, pad)
 		fmt.Printf("%s%s = b[0]\n", pad, fname)
 	default:
-		fmt.Printf("%s%s.Unmarshal(w)\n", pad, fname)
+		fmt.Printf("%s%s.Unmarshal(r)\n", pad, fname)
 	}
 }
 
@@ -120,6 +122,10 @@ func free_index_str() {
 }
 
 func walkOne(f *ast.Field, pred string, funcname string, fn func(string, string, string), pad string) {
+    ioid := "w"
+    if funcname == "Unmarshal" {
+        ioid = "r"
+    }
 	switch f.Type.(type) {
 	case *ast.Ident:
 		t := f.Type.(*ast.Ident)
@@ -128,8 +134,8 @@ func walkOne(f *ast.Field, pred string, funcname string, fn func(string, string,
 		//se := f.Type.(*ast.SelectorExpr)
 		//fmt.Printf("%s%s.%s%s(&%s, w)\n",
 		//	pad, se.X, funcname, se.Sel.Name, pred)
-        fmt.Printf("%s%s.%s(w)\n",
-			pad, pred, funcname)
+        fmt.Printf("%s%s.%s(%s)\n",
+			pad, pred, funcname, ioid)
 	case *ast.ArrayType:
 		s := f.Type.(*ast.ArrayType)
 		e, ok := s.Len.(*ast.BasicLit)
