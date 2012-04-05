@@ -3,8 +3,11 @@ package binidl
 import (
 	"fmt"
 	"go/ast"
+	"bytes"
 	"go/parser"
 	"go/token"
+	"io"
+	"os"
 	"reflect"
 	"strconv"
 )
@@ -21,9 +24,6 @@ func NewBinidl(filename string) *Binidl {
 		fmt.Println("Error parsing", filename, ":", err)
 		return nil
 	}
-	fmt.Println("package", ast.Name.Name)
-    fmt.Println("")
-    fmt.Println("import (\n\t\"io\"\n\t\"bufio\"\n\t\"encoding/binary\"\n)\n")
 	return &Binidl{ast, fset}
 }
 
@@ -33,85 +33,85 @@ func resetb() {
 	cur_b_marshal_state = 10
 }
 
-func b(n int, pad string) {
+func setbs(b io.Writer, n int, pad string) {
 	if (n != cur_b_marshal_state) {
-		fmt.Printf("%sbs = b[:%d]\n", pad, n)
+		fmt.Fprintf(b, "%sbs = b[:%d]\n", pad, n)
 	}
 	cur_b_marshal_state = n
 }
-func bs(fname, tname, orderconvert string, pad string) {
-	fmt.Printf("%sbinary.LittleEndian.Put%s(bs, %s(%s))\n", pad, orderconvert, tname, fname)
+func bs(b io.Writer, fname, tname, orderconvert string, pad string) {
+	fmt.Fprintf(b, "%sbinary.LittleEndian.Put%s(bs, %s(%s))\n", pad, orderconvert, tname, fname)
 }
-func wbs(pad string) {
-	fmt.Printf("%sw.Write(bs)\n", pad)
-}
-
-func r(n int, pad string) {
-	b(n, pad)
-	fmt.Printf("%sif _, err := io.ReadFull(r, bs); err != nil {\n", pad)
-	fmt.Printf("%s\treturn err\n%s}\n", pad, pad)
+func wbs(b io.Writer, pad string) {
+	fmt.Fprintf(b, "%sw.Write(bs)\n", pad)
 }
 
-func c(fname, tname, orderconvert string, pad string) {
-	fmt.Printf("%s%s = %s(binary.LittleEndian.%s(bs))\n", pad, fname, tname, orderconvert)
+func r(b io.Writer, n int, pad string) {
+	setbs(b, n, pad)
+	fmt.Fprintf(b, "%sif _, err := io.ReadFull(r, bs); err != nil {\n", pad)
+	fmt.Fprintf(b, "%s\treturn err\n%s}\n", pad, pad)
 }
 
-func unmarshalField(fname, tname, pad string) {
+func c(b io.Writer, fname, tname, orderconvert, pad string) {
+	fmt.Fprintf(b, "%s%s = %s(binary.LittleEndian.%s(bs))\n", pad, fname, tname, orderconvert)
+}
+
+func unmarshalField(b io.Writer, fname, tname, pad string) {
 	tconv := tname
 	if mapped, ok := typemap[tname]; ok {
 		tconv = mapped
 	}
 	switch tconv {
 	case "int", "int64", "uint64":
-		r(8, pad)
-		c(fname, tname, "Uint64", pad)
+		r(b, 8, pad)
+		c(b, fname, tname, "Uint64", pad)
 	case "int32", "uint32":
-		r(4, pad)
-		c(fname, tname, "Uint32", pad)
+		r(b, 4, pad)
+		c(b, fname, tname, "Uint32", pad)
 	case "int16", "uint16":
-		r(2, pad)
-		c(fname, tname, "Uint16", pad)
+		r(b, 2, pad)
+		c(b, fname, tname, "Uint16", pad)
 	case "int8", "uint8", "byte":
-		r(1, pad)
-		fmt.Printf("%s%s = %s(b[0])\n", pad, fname, tname)
+		r(b, 1, pad)
+		fmt.Fprintf(b, "%s%s = %s(b[0])\n", pad, fname, tname)
 	default:
-		fmt.Printf("%s%s.Unmarshal(r)\n", pad, fname)
+		fmt.Fprintf(b, "%s%s.Unmarshal(r)\n", pad, fname)
 	}
 }
 
-func marshalField(fname, tname, pad string) {
+func marshalField(b io.Writer, fname, tname, pad string) {
 	if mapped, ok := typemap[tname]; ok {
 		tname = mapped
 	}
 
 	switch tname {
 	case "int", "int64", "uint64":
-		b(8, pad)
-		bs(fname, "uint64", "Uint64", pad)
-		wbs(pad)
+		setbs(b, 8, pad)
+		bs(b, fname, "uint64", "Uint64", pad)
+		wbs(b, pad)
 	case "int32", "uint32":
-		b(4, pad)
-		bs(fname, "uint32", "Uint32", pad)
-		wbs(pad)
+		setbs(b, 4, pad)
+		bs(b, fname, "uint32", "Uint32", pad)
+		wbs(b, pad)
 	case "int16", "uint16":
-		b(2, pad)
-		bs(fname, "uint16", "Uint16", pad)
-		wbs(pad)
+		setbs(b, 2, pad)
+		bs(b, fname, "uint16", "Uint16", pad)
+		wbs(b, pad)
 	case "int8", "uint8", "byte":
-		b(1, pad)
-		fmt.Printf("%sb[0] = byte(%s)\n", pad, fname)
-		wbs(pad)
+		setbs(b, 1, pad)
+		fmt.Fprintf(b, "%sb[0] = byte(%s)\n", pad, fname)
+		wbs(b, pad)
 	default:
-		fmt.Printf("%s%s.Marshal(w)\n", pad, fname)
+		fmt.Fprintf(b, "%s%s.Marshal(w)\n", pad, fname)
 	}
 }
 
 
-func walkContents(st *ast.StructType, pred string, funcname string, fn func(string, string, string)) {
+func walkContents(b io.Writer, st *ast.StructType, pred string, funcname string, fn func(io.Writer, string, string, string)) {
 	for _, f := range st.Fields.List {
 		fname := f.Names[0].Name
 		newpred := pred+"."+fname
-		walkOne(f, newpred, funcname, fn, "\t")
+		walkOne(b, f, newpred, funcname, fn, "\t")
 	}
 }
 
@@ -129,7 +129,10 @@ func free_index_str() {
 	index_depth--
 }
 
-func walkOne(f *ast.Field, pred string, funcname string, fn func(string, string, string), pad string) {
+var need_readbyte bool = false
+var need_bufio = false
+
+func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io.Writer, string, string, string), pad string) {
     ioid := "w"
     if funcname == "Unmarshal" {
         ioid = "r"
@@ -137,33 +140,35 @@ func walkOne(f *ast.Field, pred string, funcname string, fn func(string, string,
 	switch f.Type.(type) {
 	case *ast.Ident:
 		t := f.Type.(*ast.Ident)
-		fn(pred, t.Name, pad)
+		fn(b, pred, t.Name, pad)
 	case *ast.SelectorExpr:
 		//se := f.Type.(*ast.SelectorExpr)
 		//fmt.Printf("%s%s.%s%s(&%s, w)\n",
 		//	pad, se.X, funcname, se.Sel.Name, pred)
-		fmt.Printf("%s%s.%s(%s)\n",
+		fmt.Fprintf(b, "%s%s.%s(%s)\n",
 			pad, pred, funcname, ioid)
 	case *ast.ArrayType:
 		s := f.Type.(*ast.ArrayType)
 		i := get_index_str()
-		fmt.Printf("%s{\n", pad)
+		fmt.Fprintf(b, "%s{\n", pad)
 		if s.Len == nil {
 			// If we are unmarshaling we need to allocate.
 			if ioid == "r" {
-				fmt.Printf("%slen, err := binary.ReadVarint(r)\n", pad)
-				fmt.Printf("%sif err != nil {\n", pad)
-				fmt.Printf("%s\treturn err\n", pad)
-				fmt.Printf("%s}\n", pad)
-				fmt.Printf("%s%s = make([]%s, len)\n", pad, pred, s.Elt)
+				need_readbyte = true
+				need_bufio = true
+				fmt.Fprintf(b, "%slen, err := binary.ReadVarint(r)\n", pad)
+				fmt.Fprintf(b, "%sif err != nil {\n", pad)
+				fmt.Fprintf(b, "%s\treturn err\n", pad)
+				fmt.Fprintf(b, "%s}\n", pad)
+				fmt.Fprintf(b, "%s%s = make([]%s, len)\n", pad, pred, s.Elt)
 			} else {
-				b(10, pad)
-				fmt.Printf("%slen := int64(len(%s))\n", pad, pred)
-				fmt.Printf("%sif wlen := binary.PutVarint(bs, len); wlen >= 0 {\n", pad)
-				fmt.Printf("%s\tw.Write(b[0:wlen])\n", pad)
-				fmt.Printf("%s}\n", pad)
+				setbs(b, 10, pad)
+				fmt.Fprintf(b, "%slen := int64(len(%s))\n", pad, pred)
+				fmt.Fprintf(b, "%sif wlen := binary.PutVarint(bs, len); wlen >= 0 {\n", pad)
+				fmt.Fprintf(b, "%s\tw.Write(b[0:wlen])\n", pad)
+				fmt.Fprintf(b, "%s}\n", pad)
 			}
-			fmt.Printf("%sfor %s := int64(0); %s < len; %s++ {\n", pad, i, i, i)
+			fmt.Fprintf(b, "%sfor %s := int64(0); %s < len; %s++ {\n", pad, i, i, i)
 		} else {
 			e, ok := s.Len.(*ast.BasicLit)
 			if !ok {
@@ -173,14 +178,14 @@ func walkOne(f *ast.Field, pred string, funcname string, fn func(string, string,
 			if err != nil {
 				panic("Bad array length value.  Must be a simple int.")
 			}
-			fmt.Printf("%sfor %s := 0; %s < %d; %s++ {\n", pad, i, i, len, i)
+			fmt.Fprintf(b, "%sfor %s := 0; %s < %d; %s++ {\n", pad, i, i, len, i)
 		}
 		
 		fsub := fmt.Sprintf("%s[%s]", pred, i)
 		pseudofield := &ast.Field{nil, nil, s.Elt, nil, nil}
-		walkOne(pseudofield, fsub, funcname, fn, pad+"\t")
-		fmt.Printf("%s}\n", pad)
-		fmt.Printf("%s}\n", pad)
+		walkOne(b, pseudofield, fsub, funcname, fn, pad+"\t")
+		fmt.Fprintf(b, "%s}\n", pad)
+		fmt.Fprintf(b, "%s}\n", pad)
 		free_index_str()
 	default:
 		panic("Unknown type in struct")
@@ -192,7 +197,7 @@ var native_type map[string]bool = map[string]bool { "int64":true,
 	"uint64":true, "int":true, "int32":true, "uint32":true,
 	"int16":true, "uint16":true, "int8":true, "uint8":true, }
 
-func structmap(n interface{}) {
+func structmap(out io.Writer, n interface{}) {
 	decl, ok := n.(*ast.GenDecl)
 	if !ok {
 		return
@@ -217,32 +222,54 @@ func structmap(n interface{}) {
 		panic("Can't handle decl!")
 	}
 
+	b := new(bytes.Buffer)
+
+	need_readbyte = false
 	//fmt.Println("ts: ", typeName)
-	fmt.Printf("func (t *%s) Marshal(w io.Writer) {\n", typeName)
-	fmt.Println("\tvar b [10]byte")
-	fmt.Println("\tbs := b[:10]")
+	fmt.Fprintf(out, "func (t *%s) Marshal(w io.Writer) {\n", typeName)
+	fmt.Fprintln(out, "\tvar b [10]byte")
+	fmt.Fprintln(out, "\tbs := b[:10]")
 	resetb()
 	//fmt.Printf("tstype: ", reflect.TypeOf(ts.Type))
-	walkContents(st, "t", "Marshal", marshalField)
-	fmt.Println("}\n")
+	walkContents(b, st, "t", "Marshal", marshalField)
+	b.WriteTo(out)
+	fmt.Fprintln(out, "}\n")
 
 	// This is a good thing to optimize in the future:  Adding a bufio slows
 	// unmarshaling down by a fair bit and is only needed for certain types
 	// of structs.
-	fmt.Printf("func (t *%s) Unmarshal(rr io.Reader) error {\n", typeName)
-	fmt.Println("\tr := bufio.NewReader(rr)\n")
-	fmt.Println("\tvar b [10]byte")
-	fmt.Println("\tbs := b[:10]")
+	b.Reset()
 	resetb()
-	walkContents(st, "t", "Unmarshal", unmarshalField)
-	fmt.Println("\treturn nil\n}\n")
+	walkContents(b, st, "t", "Unmarshal", unmarshalField)
+	paramname := "r"
+	if need_readbyte {
+		paramname = "rr"
+	}
+	fmt.Fprintf(out, "func (t *%s) Unmarshal(%s io.Reader) error {\n", typeName, paramname)
+	if need_readbyte {
+		fmt.Fprintln(out, "\tr := bufio.NewReader(rr)\n")
+	}
+	fmt.Fprintln(out, "\tvar b [10]byte")
+	fmt.Fprintln(out, "\tbs := b[:10]")
+	b.WriteTo(out)
+	fmt.Fprintln(out, "\treturn nil\n}\n")
 	return
 }
 
 func (bf *Binidl) PrintGo() {
+	b := new(bytes.Buffer)
 	for _, d := range bf.ast.Decls {
-		structmap(d)
+		structmap(b, d)
 	}
+	fmt.Println("package", bf.ast.Name.Name)
+	fmt.Println("")
+	fmt.Println("import (")
+	if need_bufio {
+		fmt.Println("\t\"bufio\"")
+	}
+	fmt.Println("\t\"io\"\n\t\"encoding/binary\"")
+	fmt.Println(")")
+	b.WriteTo(os.Stdout)
 }
 
 func let_me_keep_reflect_loaded_please() {
