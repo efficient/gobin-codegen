@@ -172,9 +172,9 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 		fmt.Fprintf(b, "{\n")
 		if s.Len == nil {
 			// If we are unmarshaling we need to allocate.
+			need_readbyte = true
+			need_bufio = true
 			if ioid == "r" {
-				need_readbyte = true
-				need_bufio = true
 				fmt.Fprintf(b, "len, err := binary.ReadVarint(r)\n")
 				fmt.Fprintf(b, "if err != nil {\n")
 				fmt.Fprintf(b, "return err\n")
