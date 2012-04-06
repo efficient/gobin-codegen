@@ -264,9 +264,8 @@ func structmap(out io.Writer, n interface{}) {
 	if need_readbyte {
 		fmt.Fprintln(out, `
 var r byteReader
-if rrr, ok := rr.(byteReader); ok {
-    r = rrr
-} else {
+var ok bool
+if r, ok = rr.(byteReader); !ok {
     r = bufio.NewReader(rr)
 }`)
 	}
