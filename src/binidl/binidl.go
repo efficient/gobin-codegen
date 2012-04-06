@@ -290,11 +290,13 @@ func (bf *Binidl) PrintGo() {
 
 	// Output and then gofmt it to make it pretty and shiny.  And readable.
 	tf, _ := ioutil.TempFile("", "gobin-codegen")
+	tfname := tf.Name()
+	defer os.Remove(tfname)
+	defer tf.Close()
+
 	b.WriteTo(tf)
 	rest.WriteTo(tf)
-	// flush it
 	tf.Sync()
-	tfname := tf.Name()
 	
 	fset := token.NewFileSet()
 	ast, err := parser.ParseFile(fset, tfname, nil, 0)
