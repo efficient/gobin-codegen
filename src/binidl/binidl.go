@@ -260,8 +260,15 @@ func structmap(out io.Writer, n interface{}) {
 		paramname = "rr"
 	}
 	fmt.Fprintf(out, "func (t *%s) Unmarshal(%s io.Reader) error {\n", typeName, paramname)
+	
 	if need_readbyte {
-		fmt.Fprintln(out, "r := bufio.NewReader(rr)\n")
+		fmt.Fprintln(out, `
+var r byteReader
+if rr, ok := w.(byteReader); ok {
+    r = rr
+} else {
+    r = bufio.NewReader(rr)
+}`)
 	}
 	fmt.Fprintf(out, "var b [%d]byte\n", blen)
 	fmt.Fprintf(out, "bs := b[:%d]\n", first_blen)
@@ -287,7 +294,12 @@ func (bf *Binidl) PrintGo() {
 		fmt.Fprintf(b, "\"%s\"\n", imp)
 	}
 	fmt.Fprintln(b, ")")
-
+	if need_bufio {
+		fmt.Fprintln(b, `type byteReader interface {
+io.Reader
+ReadByte() (c byte, err error)
+}`)
+	}
 	// Output and then gofmt it to make it pretty and shiny.  And readable.
 	tf, _ := ioutil.TempFile("", "gobin-codegen")
 	tfname := tf.Name()
