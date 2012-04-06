@@ -28,22 +28,20 @@ func NewBinidl(filename string) *Binidl {
 }
 
 var cur_b_marshal_state int = 0
-
-func resetb() {
-	cur_b_marshal_state = 10
-}
+var first_blen int = 0
 
 func setbs(b io.Writer, n int, pad string) {
-	if (n != cur_b_marshal_state) {
-		fmt.Fprintf(b, "%sbs = b[:%d]\n", pad, n)
+	if (first_blen == 0) {
+		first_blen = n
+	} else {
+		if (n != cur_b_marshal_state) {
+			fmt.Fprintf(b, "%sbs = b[:%d]\n", pad, n)
+		}
 	}
 	cur_b_marshal_state = n
 }
 func bs(b io.Writer, fname, tname, orderconvert string, pad string) {
-	fmt.Fprintf(b, "%sbinary.LittleEndian.Put%s(bs, %s(%s))\n", pad, orderconvert, tname, fname)
-}
-func wbs(b io.Writer, pad string) {
-	fmt.Fprintf(b, "%sw.Write(bs)\n", pad)
+	fmt.Fprintf(b, "%s%s(bs, %s(%s))\n", pad, orderconvert, tname, fname)
 }
 
 func r(b io.Writer, n int, pad string) {
@@ -52,30 +50,23 @@ func r(b io.Writer, n int, pad string) {
 	fmt.Fprintf(b, "%s\treturn err\n%s}\n", pad, pad)
 }
 
-func c(b io.Writer, fname, tname, orderconvert, pad string) {
-	fmt.Fprintf(b, "%s%s = %s(binary.LittleEndian.%s(bs))\n", pad, fname, tname, orderconvert)
-}
-
 func unmarshalField(b io.Writer, fname, tname, pad string) {
 	tconv := tname
 	if mapped, ok := typemap[tname]; ok {
 		tconv = mapped
 	}
-	switch tconv {
-	case "int", "int64", "uint64":
-		r(b, 8, pad)
-		c(b, fname, tname, "Uint64", pad)
-	case "int32", "uint32":
-		r(b, 4, pad)
-		c(b, fname, tname, "Uint32", pad)
-	case "int16", "uint16":
-		r(b, 2, pad)
-		c(b, fname, tname, "Uint16", pad)
-	case "int8", "uint8", "byte":
-		r(b, 1, pad)
-		fmt.Fprintf(b, "%s%s = %s(b[0])\n", pad, fname, tname)
-	default:
+
+	ti, ok := typedb[tconv]
+	if !ok {
 		fmt.Fprintf(b, "%s%s.Unmarshal(r)\n", pad, fname)
+		return
+	}
+	
+	r(b, ti.Size, pad)
+	if (ti.Size == 1) {
+		fmt.Fprintf(b, "%s%s = %s(b[0])\n", pad, fname, tname)
+	} else {
+		fmt.Fprintf(b, "%s%s = %s(%s(bs))\n", pad, fname, tname, decodeFunc[ti.EncodesAs])
 	}
 }
 
@@ -84,26 +75,19 @@ func marshalField(b io.Writer, fname, tname, pad string) {
 		tname = mapped
 	}
 
-	switch tname {
-	case "int", "int64", "uint64":
-		setbs(b, 8, pad)
-		bs(b, fname, "uint64", "Uint64", pad)
-		wbs(b, pad)
-	case "int32", "uint32":
-		setbs(b, 4, pad)
-		bs(b, fname, "uint32", "Uint32", pad)
-		wbs(b, pad)
-	case "int16", "uint16":
-		setbs(b, 2, pad)
-		bs(b, fname, "uint16", "Uint16", pad)
-		wbs(b, pad)
-	case "int8", "uint8", "byte":
-		setbs(b, 1, pad)
-		fmt.Fprintf(b, "%sb[0] = byte(%s)\n", pad, fname)
-		wbs(b, pad)
-	default:
+	ti, ok := typedb[tname]
+	if !ok {
 		fmt.Fprintf(b, "%s%s.Marshal(w)\n", pad, fname)
+		return
 	}
+
+	setbs(b, ti.Size, pad)
+	if (ti.Size == 1) {
+		fmt.Fprintf(b, "%sb[0] = byte(%s)\n", pad, fname)
+	} else {
+		bs(b, fname, ti.EncodesAs, encodeFunc[ti.EncodesAs], pad)
+	}
+	fmt.Fprintf(b, "%sw.Write(bs)\n", pad)
 }
 
 
@@ -131,6 +115,38 @@ func free_index_str() {
 
 var need_readbyte bool = false
 var need_bufio = false
+
+var typemap map[string]string = make(map[string]string)
+type TypeInfo struct {
+	Name string
+	Size int
+	EncodesAs string
+}
+
+var encodeFunc map[string]string = map[string]string {
+	"uint64" : "binary.LittleEndian.PutUint64",
+	"uint32" : "binary.LittleEndian.PutUint32",
+	"uint16" : "binary.LittleEndian.PutUint16",
+}
+
+var decodeFunc map[string]string = map[string]string {
+	"uint64" : "binary.LittleEndian.Uint64",
+	"uint32" : "binary.LittleEndian.Uint32",
+	"uint16" : "binary.LittleEndian.Uint16",
+}
+
+var typedb map[string]TypeInfo = map[string]TypeInfo {
+	"int": {"int", 8, "uint64"},
+	"uint64" : {"uint64", 8, "uint64"},
+	"int64" : {"int64", 8, "uint64"},
+	"int32" : {"int32", 4, "uint32"},
+	"uint32" : {"uint32", 4, "uint32"},
+	"int16" : {"int16", 2, "uint16"},
+	"uint16" : {"uint16", 2, "uint16"},
+	"int8" : {"int8", 1, "byte"},
+	"uint8" : {"uint8", 1, "byte"},
+	"byte" : {"byte", 1, "byte"},
+}
 
 func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io.Writer, string, string, string), pad string) {
     ioid := "w"
@@ -192,10 +208,6 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 	}
 }
 
-var typemap map[string]string = make(map[string]string)
-var native_type map[string]bool = map[string]bool { "int64":true,
-	"uint64":true, "int":true, "int32":true, "uint32":true,
-	"int16":true, "uint16":true, "int8":true, "uint8":true, }
 
 func structmap(out io.Writer, n interface{}) {
 	decl, ok := n.(*ast.GenDecl)
@@ -214,7 +226,7 @@ func structmap(out io.Writer, n interface{}) {
 		//fmt.Println("Type of type is ", reflect.TypeOf(ts.Type))
 		if id, ok := ts.Type.(*ast.Ident); ok {
 			tname := id.Name
-			if native_type[tname] {
+			if _, ok := typedb[tname]; ok {
 				typemap[typeName] = tname
 				return
 			}
@@ -225,21 +237,22 @@ func structmap(out io.Writer, n interface{}) {
 	b := new(bytes.Buffer)
 
 	need_readbyte = false
+	first_blen = 0
 	//fmt.Println("ts: ", typeName)
-	fmt.Fprintf(out, "func (t *%s) Marshal(w io.Writer) {\n", typeName)
-	fmt.Fprintln(out, "\tvar b [10]byte")
-	fmt.Fprintln(out, "\tbs := b[:10]")
-	resetb()
-	//fmt.Printf("tstype: ", reflect.TypeOf(ts.Type))
 	walkContents(b, st, "t", "Marshal", marshalField)
+	blen := 8
+	if need_readbyte {
+		blen  = 10
+	}
+	fmt.Fprintf(out, "func (t *%s) Marshal(w io.Writer) {\n", typeName)
+	fmt.Fprintf(out, "\tvar b [%d]byte\n", blen)
+	fmt.Fprintf(out, "\tbs := b[:%d]\n", first_blen)
+
 	b.WriteTo(out)
 	fmt.Fprintln(out, "}\n")
 
-	// This is a good thing to optimize in the future:  Adding a bufio slows
-	// unmarshaling down by a fair bit and is only needed for certain types
-	// of structs.
 	b.Reset()
-	resetb()
+	first_blen = 0
 	walkContents(b, st, "t", "Unmarshal", unmarshalField)
 	paramname := "r"
 	if need_readbyte {
@@ -249,8 +262,9 @@ func structmap(out io.Writer, n interface{}) {
 	if need_readbyte {
 		fmt.Fprintln(out, "\tr := bufio.NewReader(rr)\n")
 	}
-	fmt.Fprintln(out, "\tvar b [10]byte")
-	fmt.Fprintln(out, "\tbs := b[:10]")
+	fmt.Fprintf(out, "\tvar b [%d]byte\n", blen)
+	fmt.Fprintf(out, "\tbs := b[:%d]\n", first_blen)
+	cur_b_marshal_state = first_blen
 	b.WriteTo(out)
 	fmt.Fprintln(out, "\treturn nil\n}\n")
 	return
