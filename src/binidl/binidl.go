@@ -6,7 +6,9 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/printer"
 	"io"
+	"io/ioutil"
 	"os"
 	"reflect"
 	"strconv"
@@ -30,27 +32,27 @@ func NewBinidl(filename string) *Binidl {
 var cur_b_marshal_state int = 0
 var first_blen int = 0
 
-func setbs(b io.Writer, n int, pad string) {
+func setbs(b io.Writer, n int) {
 	if first_blen == 0 {
 		first_blen = n
 	} else {
 		if n != cur_b_marshal_state {
-			fmt.Fprintf(b, "%sbs = b[:%d]\n", pad, n)
+			fmt.Fprintf(b, "bs = b[:%d]\n", n)
 		}
 	}
 	cur_b_marshal_state = n
 }
-func bs(b io.Writer, fname, tname, orderconvert string, pad string) {
-	fmt.Fprintf(b, "%s%s(bs, %s(%s))\n", pad, orderconvert, tname, fname)
+func bs(b io.Writer, fname, tname, orderconvert string) {
+	fmt.Fprintf(b, "%s(bs, %s(%s))\n", orderconvert, tname, fname)
 }
 
-func r(b io.Writer, n int, pad string) {
-	setbs(b, n, pad)
-	fmt.Fprintf(b, "%sif _, err := io.ReadFull(r, bs); err != nil {\n", pad)
-	fmt.Fprintf(b, "%s\treturn err\n%s}\n", pad, pad)
+func r(b io.Writer, n int) {
+	setbs(b, n)
+	fmt.Fprintf(b, "if _, err := io.ReadFull(r, bs); err != nil {\n")
+	fmt.Fprintf(b, "return err\n}\n")
 }
 
-func unmarshalField(b io.Writer, fname, tname, pad string) {
+func unmarshalField(b io.Writer, fname, tname string) {
 	tconv := tname
 	if mapped, ok := typemap[tname]; ok {
 		tconv = mapped
@@ -58,43 +60,43 @@ func unmarshalField(b io.Writer, fname, tname, pad string) {
 
 	ti, ok := typedb[tconv]
 	if !ok {
-		fmt.Fprintf(b, "%s%s.Unmarshal(r)\n", pad, fname)
+		fmt.Fprintf(b, "%s.Unmarshal(r)\n", fname)
 		return
 	}
 
-	r(b, ti.Size, pad)
+	r(b, ti.Size)
 	if ti.Size == 1 {
-		fmt.Fprintf(b, "%s%s = %s(b[0])\n", pad, fname, tname)
+		fmt.Fprintf(b, "%s = %s(b[0])\n", fname, tname)
 	} else {
-		fmt.Fprintf(b, "%s%s = %s(%s(bs))\n", pad, fname, tname, decodeFunc[ti.EncodesAs])
+		fmt.Fprintf(b, "%s = %s(%s(bs))\n", fname, tname, decodeFunc[ti.EncodesAs])
 	}
 }
 
-func marshalField(b io.Writer, fname, tname, pad string) {
+func marshalField(b io.Writer, fname, tname string) {
 	if mapped, ok := typemap[tname]; ok {
 		tname = mapped
 	}
 
 	ti, ok := typedb[tname]
 	if !ok {
-		fmt.Fprintf(b, "%s%s.Marshal(w)\n", pad, fname)
+		fmt.Fprintf(b, "%s.Marshal(w)\n", fname)
 		return
 	}
 
-	setbs(b, ti.Size, pad)
+	setbs(b, ti.Size)
 	if ti.Size == 1 {
-		fmt.Fprintf(b, "%sb[0] = byte(%s)\n", pad, fname)
+		fmt.Fprintf(b, "b[0] = byte(%s)\n", fname)
 	} else {
-		bs(b, fname, ti.EncodesAs, encodeFunc[ti.EncodesAs], pad)
+		bs(b, fname, ti.EncodesAs, encodeFunc[ti.EncodesAs])
 	}
-	fmt.Fprintf(b, "%sw.Write(bs)\n", pad)
+	fmt.Fprintf(b, "w.Write(bs)\n")
 }
 
-func walkContents(b io.Writer, st *ast.StructType, pred string, funcname string, fn func(io.Writer, string, string, string)) {
+func walkContents(b io.Writer, st *ast.StructType, pred string, funcname string, fn func(io.Writer, string, string)) {
 	for _, f := range st.Fields.List {
 		fname := f.Names[0].Name
 		newpred := pred + "." + fname
-		walkOne(b, f, newpred, funcname, fn, "\t")
+		walkOne(b, f, newpred, funcname, fn)
 	}
 }
 
@@ -149,7 +151,7 @@ var typedb map[string]TypeInfo = map[string]TypeInfo{
 	"byte":   {"byte", 1, "byte"},
 }
 
-func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io.Writer, string, string, string), pad string) {
+func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io.Writer, string, string)) {
 	ioid := "w"
 	if funcname == "Unmarshal" {
 		ioid = "r"
@@ -157,35 +159,35 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 	switch f.Type.(type) {
 	case *ast.Ident:
 		t := f.Type.(*ast.Ident)
-		fn(b, pred, t.Name, pad)
+		fn(b, pred, t.Name)
 	case *ast.SelectorExpr:
 		//se := f.Type.(*ast.SelectorExpr)
-		//fmt.Printf("%s%s.%s%s(&%s, w)\n",
-		//	pad, se.X, funcname, se.Sel.Name, pred)
-		fmt.Fprintf(b, "%s%s.%s(%s)\n",
-			pad, pred, funcname, ioid)
+		//fmt.Printf("%s.%s%s(&%s, w)\n",
+		//	se.X, funcname, se.Sel.Name, pred)
+		fmt.Fprintf(b, "%s.%s(%s)\n",
+			pred, funcname, ioid)
 	case *ast.ArrayType:
 		s := f.Type.(*ast.ArrayType)
 		i := get_index_str()
-		fmt.Fprintf(b, "%s{\n", pad)
+		fmt.Fprintf(b, "{\n")
 		if s.Len == nil {
 			// If we are unmarshaling we need to allocate.
 			if ioid == "r" {
 				need_readbyte = true
 				need_bufio = true
-				fmt.Fprintf(b, "%slen, err := binary.ReadVarint(r)\n", pad)
-				fmt.Fprintf(b, "%sif err != nil {\n", pad)
-				fmt.Fprintf(b, "%s\treturn err\n", pad)
-				fmt.Fprintf(b, "%s}\n", pad)
-				fmt.Fprintf(b, "%s%s = make([]%s, len)\n", pad, pred, s.Elt)
+				fmt.Fprintf(b, "len, err := binary.ReadVarint(r)\n")
+				fmt.Fprintf(b, "if err != nil {\n")
+				fmt.Fprintf(b, "return err\n")
+				fmt.Fprintf(b, "}\n")
+				fmt.Fprintf(b, "%s = make([]%s, len)\n", pred, s.Elt)
 			} else {
-				setbs(b, 10, pad)
-				fmt.Fprintf(b, "%slen := int64(len(%s))\n", pad, pred)
-				fmt.Fprintf(b, "%sif wlen := binary.PutVarint(bs, len); wlen >= 0 {\n", pad)
-				fmt.Fprintf(b, "%s\tw.Write(b[0:wlen])\n", pad)
-				fmt.Fprintf(b, "%s}\n", pad)
+				setbs(b, 10)
+				fmt.Fprintf(b, "len := int64(len(%s))\n", pred)
+				fmt.Fprintf(b, "if wlen := binary.PutVarint(bs, len); wlen >= 0 {\n")
+				fmt.Fprintf(b, "w.Write(b[0:wlen])\n")
+				fmt.Fprintf(b, "}\n")
 			}
-			fmt.Fprintf(b, "%sfor %s := int64(0); %s < len; %s++ {\n", pad, i, i, i)
+			fmt.Fprintf(b, "for %s := int64(0); %s < len; %s++ {\n", i, i, i)
 		} else {
 			e, ok := s.Len.(*ast.BasicLit)
 			if !ok {
@@ -195,14 +197,13 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 			if err != nil {
 				panic("Bad array length value.  Must be a simple int.")
 			}
-			fmt.Fprintf(b, "%sfor %s := 0; %s < %d; %s++ {\n", pad, i, i, len, i)
+			fmt.Fprintf(b, "for %s := 0; %s < %d; %s++ {\n", i, i, len, i)
 		}
 
 		fsub := fmt.Sprintf("%s[%s]", pred, i)
 		pseudofield := &ast.Field{nil, nil, s.Elt, nil, nil}
-		walkOne(b, pseudofield, fsub, funcname, fn, pad+"\t")
-		fmt.Fprintf(b, "%s}\n", pad)
-		fmt.Fprintf(b, "%s}\n", pad)
+		walkOne(b, pseudofield, fsub, funcname, fn)
+		fmt.Fprintf(b, "}\n}\n")
 		free_index_str()
 	default:
 		panic("Unknown type in struct")
@@ -245,8 +246,8 @@ func structmap(out io.Writer, n interface{}) {
 		blen = 10
 	}
 	fmt.Fprintf(out, "func (t *%s) Marshal(w io.Writer) {\n", typeName)
-	fmt.Fprintf(out, "\tvar b [%d]byte\n", blen)
-	fmt.Fprintf(out, "\tbs := b[:%d]\n", first_blen)
+	fmt.Fprintf(out, "var b [%d]byte\n", blen)
+	fmt.Fprintf(out, "bs := b[:%d]\n", first_blen)
 
 	b.WriteTo(out)
 	fmt.Fprintln(out, "}\n")
@@ -260,30 +261,44 @@ func structmap(out io.Writer, n interface{}) {
 	}
 	fmt.Fprintf(out, "func (t *%s) Unmarshal(%s io.Reader) error {\n", typeName, paramname)
 	if need_readbyte {
-		fmt.Fprintln(out, "\tr := bufio.NewReader(rr)\n")
+		fmt.Fprintln(out, "r := bufio.NewReader(rr)\n")
 	}
-	fmt.Fprintf(out, "\tvar b [%d]byte\n", blen)
-	fmt.Fprintf(out, "\tbs := b[:%d]\n", first_blen)
+	fmt.Fprintf(out, "var b [%d]byte\n", blen)
+	fmt.Fprintf(out, "bs := b[:%d]\n", first_blen)
 	cur_b_marshal_state = first_blen
 	b.WriteTo(out)
-	fmt.Fprintln(out, "\treturn nil\n}\n")
+	fmt.Fprintln(out, "return nil\n}\n")
 	return
 }
 
 func (bf *Binidl) PrintGo() {
-	b := new(bytes.Buffer)
+	rest := new(bytes.Buffer)
 	for _, d := range bf.ast.Decls {
-		structmap(b, d)
+		structmap(rest, d)
 	}
-	fmt.Println("package", bf.ast.Name.Name)
-	fmt.Println("")
-	fmt.Println("import (")
+	b := new(bytes.Buffer)
+	fmt.Fprintln(b, "package", bf.ast.Name.Name)
+	fmt.Fprintln(b, "import (")
 	if need_bufio {
-		fmt.Println("\t\"bufio\"")
+		fmt.Fprintln(b, "\"bufio\"")
 	}
-	fmt.Println("\t\"io\"\n\t\"encoding/binary\"")
-	fmt.Println(")")
-	b.WriteTo(os.Stdout)
+	fmt.Fprintln(b, "\"io\"\n\"encoding/binary\"")
+	fmt.Fprintln(b, ")")
+
+	// Output and then gofmt it to make it pretty and shiny.  And readable.
+	tf, _ := ioutil.TempFile("", "gobin-codegen")
+	b.WriteTo(tf)
+	rest.WriteTo(tf)
+	// flush it
+	tf.Sync()
+	tfname := tf.Name()
+	
+	fset := token.NewFileSet()
+	ast, err := parser.ParseFile(fset, tfname, nil, 0)
+	if err != nil {
+		panic(err.Error())
+	}
+	printer.Fprint(os.Stdout, fset, ast)
 }
 
 func let_me_keep_reflect_loaded_please() {
