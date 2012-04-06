@@ -1,9 +1,9 @@
 package binidl
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
-	"bytes"
 	"go/parser"
 	"go/token"
 	"io"
@@ -31,10 +31,10 @@ var cur_b_marshal_state int = 0
 var first_blen int = 0
 
 func setbs(b io.Writer, n int, pad string) {
-	if (first_blen == 0) {
+	if first_blen == 0 {
 		first_blen = n
 	} else {
-		if (n != cur_b_marshal_state) {
+		if n != cur_b_marshal_state {
 			fmt.Fprintf(b, "%sbs = b[:%d]\n", pad, n)
 		}
 	}
@@ -61,9 +61,9 @@ func unmarshalField(b io.Writer, fname, tname, pad string) {
 		fmt.Fprintf(b, "%s%s.Unmarshal(r)\n", pad, fname)
 		return
 	}
-	
+
 	r(b, ti.Size, pad)
-	if (ti.Size == 1) {
+	if ti.Size == 1 {
 		fmt.Fprintf(b, "%s%s = %s(b[0])\n", pad, fname, tname)
 	} else {
 		fmt.Fprintf(b, "%s%s = %s(%s(bs))\n", pad, fname, tname, decodeFunc[ti.EncodesAs])
@@ -82,7 +82,7 @@ func marshalField(b io.Writer, fname, tname, pad string) {
 	}
 
 	setbs(b, ti.Size, pad)
-	if (ti.Size == 1) {
+	if ti.Size == 1 {
 		fmt.Fprintf(b, "%sb[0] = byte(%s)\n", pad, fname)
 	} else {
 		bs(b, fname, ti.EncodesAs, encodeFunc[ti.EncodesAs], pad)
@@ -90,16 +90,16 @@ func marshalField(b io.Writer, fname, tname, pad string) {
 	fmt.Fprintf(b, "%sw.Write(bs)\n", pad)
 }
 
-
 func walkContents(b io.Writer, st *ast.StructType, pred string, funcname string, fn func(io.Writer, string, string, string)) {
 	for _, f := range st.Fields.List {
 		fname := f.Names[0].Name
-		newpred := pred+"."+fname
+		newpred := pred + "." + fname
 		walkOne(b, f, newpred, funcname, fn, "\t")
 	}
 }
 
 var index_depth int = 0
+
 func get_index_str() string {
 	indexes := []string{"i", "j", "k", "ii", "jj", "kk"}
 	if index_depth > 5 {
@@ -117,42 +117,43 @@ var need_readbyte bool = false
 var need_bufio = false
 
 var typemap map[string]string = make(map[string]string)
+
 type TypeInfo struct {
-	Name string
-	Size int
+	Name      string
+	Size      int
 	EncodesAs string
 }
 
-var encodeFunc map[string]string = map[string]string {
-	"uint64" : "binary.LittleEndian.PutUint64",
-	"uint32" : "binary.LittleEndian.PutUint32",
-	"uint16" : "binary.LittleEndian.PutUint16",
+var encodeFunc map[string]string = map[string]string{
+	"uint64": "binary.LittleEndian.PutUint64",
+	"uint32": "binary.LittleEndian.PutUint32",
+	"uint16": "binary.LittleEndian.PutUint16",
 }
 
-var decodeFunc map[string]string = map[string]string {
-	"uint64" : "binary.LittleEndian.Uint64",
-	"uint32" : "binary.LittleEndian.Uint32",
-	"uint16" : "binary.LittleEndian.Uint16",
+var decodeFunc map[string]string = map[string]string{
+	"uint64": "binary.LittleEndian.Uint64",
+	"uint32": "binary.LittleEndian.Uint32",
+	"uint16": "binary.LittleEndian.Uint16",
 }
 
-var typedb map[string]TypeInfo = map[string]TypeInfo {
-	"int": {"int", 8, "uint64"},
-	"uint64" : {"uint64", 8, "uint64"},
-	"int64" : {"int64", 8, "uint64"},
-	"int32" : {"int32", 4, "uint32"},
-	"uint32" : {"uint32", 4, "uint32"},
-	"int16" : {"int16", 2, "uint16"},
-	"uint16" : {"uint16", 2, "uint16"},
-	"int8" : {"int8", 1, "byte"},
-	"uint8" : {"uint8", 1, "byte"},
-	"byte" : {"byte", 1, "byte"},
+var typedb map[string]TypeInfo = map[string]TypeInfo{
+	"int":    {"int", 8, "uint64"},
+	"uint64": {"uint64", 8, "uint64"},
+	"int64":  {"int64", 8, "uint64"},
+	"int32":  {"int32", 4, "uint32"},
+	"uint32": {"uint32", 4, "uint32"},
+	"int16":  {"int16", 2, "uint16"},
+	"uint16": {"uint16", 2, "uint16"},
+	"int8":   {"int8", 1, "byte"},
+	"uint8":  {"uint8", 1, "byte"},
+	"byte":   {"byte", 1, "byte"},
 }
 
 func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io.Writer, string, string, string), pad string) {
-    ioid := "w"
-    if funcname == "Unmarshal" {
-        ioid = "r"
-    }
+	ioid := "w"
+	if funcname == "Unmarshal" {
+		ioid = "r"
+	}
 	switch f.Type.(type) {
 	case *ast.Ident:
 		t := f.Type.(*ast.Ident)
@@ -196,7 +197,7 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 			}
 			fmt.Fprintf(b, "%sfor %s := 0; %s < %d; %s++ {\n", pad, i, i, len, i)
 		}
-		
+
 		fsub := fmt.Sprintf("%s[%s]", pred, i)
 		pseudofield := &ast.Field{nil, nil, s.Elt, nil, nil}
 		walkOne(b, pseudofield, fsub, funcname, fn, pad+"\t")
@@ -207,7 +208,6 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 		panic("Unknown type in struct")
 	}
 }
-
 
 func structmap(out io.Writer, n interface{}) {
 	decl, ok := n.(*ast.GenDecl)
@@ -242,7 +242,7 @@ func structmap(out io.Writer, n interface{}) {
 	walkContents(b, st, "t", "Marshal", marshalField)
 	blen := 8
 	if need_readbyte {
-		blen  = 10
+		blen = 10
 	}
 	fmt.Fprintf(out, "func (t *%s) Marshal(w io.Writer) {\n", typeName)
 	fmt.Fprintf(out, "\tvar b [%d]byte\n", blen)
