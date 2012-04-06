@@ -278,11 +278,14 @@ func (bf *Binidl) PrintGo() {
 	}
 	b := new(bytes.Buffer)
 	fmt.Fprintln(b, "package", bf.ast.Name.Name)
-	fmt.Fprintln(b, "import (")
+	imports := []string{"io", "encoding/binary"}
 	if need_bufio {
-		fmt.Fprintln(b, "\"bufio\"")
+		imports = append(imports, "bufio")
 	}
-	fmt.Fprintln(b, "\"io\"\n\"encoding/binary\"")
+	fmt.Fprintln(b, "import (")
+	for _, imp := range imports {
+		fmt.Fprintf(b, "\"%s\"\n", imp)
+	}
 	fmt.Fprintln(b, ")")
 
 	// Output and then gofmt it to make it pretty and shiny.  And readable.
