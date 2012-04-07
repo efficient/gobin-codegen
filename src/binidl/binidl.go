@@ -90,7 +90,7 @@ func marshalField(b io.Writer, fname, tname string, es *EmitState) {
 		}
 	}
 	if !es.isStatic {
-		fmt.Fprintf(b, "w.Write(bs)\n")
+		fmt.Fprintln(b, "w.Write(bs)")
 	}
 }
 
@@ -112,6 +112,12 @@ type EmitState struct {
 	nextIdx      int
 	isStatic     bool
 	staticOffset int
+	alenIdx      int
+}
+
+func (es *EmitState) getNewAlen() string {
+	es.alenIdx++
+	return fmt.Sprintf("alen%d", es.alenIdx)
 }
 
 func (es *EmitState) getIndexStr() string {
@@ -190,24 +196,24 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 	case *ast.ArrayType:
 		s := f.Type.(*ast.ArrayType)
 		i := es.getIndexStr()
-		fmt.Fprintf(b, "{\n")
 		arrayLen := 0
+		alenid := es.getNewAlen()
 		if s.Len == nil {
 			// If we are unmarshaling we need to allocate.
 			if ioid == "r" {
-				fmt.Fprintf(b, "len, err := binary.ReadVarint(r)\n")
+				fmt.Fprintf(b, "%s, err := binary.ReadVarint(r)\n", alenid)
 				fmt.Fprintf(b, "if err != nil {\n")
 				fmt.Fprintf(b, "return err\n")
 				fmt.Fprintf(b, "}\n")
-				fmt.Fprintf(b, "%s = make([]%s, len)\n", pred, s.Elt)
+				fmt.Fprintf(b, "%s = make([]%s, %s)\n", pred, s.Elt, alenid)
 			} else {
 				setbs(b, 10, es)
-				fmt.Fprintf(b, "len := int64(len(%s))\n", pred)
-				fmt.Fprintf(b, "if wlen := binary.PutVarint(bs, len); wlen >= 0 {\n")
+				fmt.Fprintf(b, "%s := int64(len(%s))\n", alenid, pred)
+				fmt.Fprintf(b, "if wlen := binary.PutVarint(bs, %s); wlen >= 0 {\n", alenid)
 				fmt.Fprintf(b, "w.Write(b[0:wlen])\n")
 				fmt.Fprintf(b, "}\n")
 			}
-			fmt.Fprintf(b, "for %s := int64(0); %s < len; %s++ {\n", i, i, i)
+			fmt.Fprintf(b, "for %s := int64(0); %s < %s; %s++ {\n", i, i, alenid, i)
 		} else {
 			e, ok := s.Len.(*ast.BasicLit)
 			if !ok {
@@ -234,7 +240,6 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 			walkOne(b, pseudofield, fsub, funcname, fn, es)
 			fmt.Fprintln(b, "}")
 		}
-		fmt.Fprintln(b, "}")
 		es.freeIndexStr()
 	default:
 		panic("Unknown type in struct")
