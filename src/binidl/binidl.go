@@ -29,16 +29,14 @@ func NewBinidl(filename string) *Binidl {
 	return &Binidl{ast, fset}
 }
 
-var cur_b_marshal_state int = 0
-
 func setbs(b io.Writer, n int, es *EmitState) {
 	if es.isStatic {
 		return
 	}
-	if n != cur_b_marshal_state {
+	if n != es.curBSize {
 		fmt.Fprintf(b, "bs = b[:%d]\n", n)
 	}
-	cur_b_marshal_state = n
+	es.curBSize = n
 }
 
 func unmarshalField(b io.Writer, fname, tname string, es *EmitState) {
@@ -113,6 +111,7 @@ type EmitState struct {
 	isStatic     bool
 	staticOffset int
 	alenIdx      int
+	curBSize     int
 }
 
 func (es *EmitState) getNewAlen() string {
@@ -387,7 +386,7 @@ func structmap(out io.Writer, n interface{}) {
 	if !mes.isStatic {
 		fmt.Fprintf(out, "bs := b[:%d]\n", info.firstSize)
 	}
-	cur_b_marshal_state = info.firstSize
+	mes.curBSize = info.firstSize
 
 	b.WriteTo(out)
 	if mes.isStatic {
@@ -398,6 +397,7 @@ func structmap(out io.Writer, n interface{}) {
 	b.Reset()
 	ues := &EmitState{}
 	ues.op = UNMARSHAL
+	ues.curBSize = info.firstSize
 	blen = 8
 	if info.varLen {
 		blen = 10
@@ -419,7 +419,6 @@ if r, ok = rr.(byteReader); !ok {
 	}
 	fmt.Fprintf(out, "var b [%d]byte\n", blen)
 	fmt.Fprintf(out, "bs := b[:%d]\n", info.firstSize)
-	cur_b_marshal_state = info.firstSize
 	b.WriteTo(out)
 	fmt.Fprintln(out, "return nil\n}\n")
 	return
