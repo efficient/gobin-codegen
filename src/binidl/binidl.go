@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"go/ast"
 	"go/parser"
-	"go/token"
 	"go/printer"
+	"go/token"
 	"io"
 	"io/ioutil"
 	"os"
@@ -32,19 +32,13 @@ func NewBinidl(filename string) *Binidl {
 var cur_b_marshal_state int = 0
 
 func setbs(b io.Writer, n int, es *EmitState) {
-	if (es.isStatic) {
+	if es.isStatic {
 		return
 	}
 	if n != cur_b_marshal_state {
 		fmt.Fprintf(b, "bs = b[:%d]\n", n)
 	}
 	cur_b_marshal_state = n
-}
-
-func r(b io.Writer, n int, es *EmitState) {
-	setbs(b, n, es)
-	fmt.Fprintf(b, "if _, err := io.ReadFull(r, bs); err != nil {\n")
-	fmt.Fprintf(b, "return err\n}\n")
 }
 
 func unmarshalField(b io.Writer, fname, tname string, es *EmitState) {
@@ -59,7 +53,11 @@ func unmarshalField(b io.Writer, fname, tname string, es *EmitState) {
 		return
 	}
 
-	r(b, ti.Size, es)
+	setbs(b, ti.Size, es)
+	fmt.Fprintln(b,
+		`if _, err := io.ReadFull(r, bs); err != nil {
+return err
+}`)
 	if ti.Size == 1 {
 		fmt.Fprintf(b, "%s = %s(b[0])\n", fname, tname)
 	} else {
@@ -104,7 +102,17 @@ func walkContents(b io.Writer, st *ast.StructType, pred string, funcname string,
 	}
 }
 
-var index_depth int = 0
+const (
+	MARSHAL = iota
+	UNMARSHAL
+)
+
+type EmitState struct {
+	op           int // MARSHAL, UNMARSHAL
+	nextIdx      int
+	isStatic     bool
+	staticOffset int
+}
 
 func (es *EmitState) getIndexStr() string {
 	indexes := []string{"i", "j", "k", "ii", "jj", "kk"}
@@ -121,7 +129,7 @@ func (es *EmitState) freeIndexStr() {
 }
 
 func (es *EmitState) Bstart(n int) int {
-	if !es.isStatic { 
+	if !es.isStatic {
 		return 0
 	}
 	o := es.staticOffset
@@ -234,22 +242,11 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 }
 
 type StructInfo struct {
-	size int
-	maxSize int
-	firstSize int
-	varLen  bool
+	size         int
+	maxSize      int
+	firstSize    int
+	varLen       bool
 	mustDispatch bool
-}
-const (
-	MARSHAL = iota
-	UNMARSHAL
-)
-
-type EmitState struct {
-	op int // 0 = marshal, 1 = unmarshal
-	nextIdx int // 0 = 'i', 1 = 'j', ..., 'z'
-	isStatic bool
-	staticOffset int
 }
 
 func mergeInfo(parent, child *StructInfo, childcount int) {
@@ -268,13 +265,13 @@ func mergeInfo(parent, child *StructInfo, childcount int) {
 	if childcount > 0 {
 		parent.size += child.size * childcount
 	}
-	
+
 }
 
 // Wouldn't it be nice to cache a lot of this? :-)
 func analyze(info *StructInfo, n interface{}) {
 	switch n.(type) {
-	case  *ast.StructType:
+	case *ast.StructType:
 		st := n.(*ast.StructType)
 		for _, field := range st.Fields.List {
 			subinfo := &StructInfo{}
@@ -283,7 +280,7 @@ func analyze(info *StructInfo, n interface{}) {
 		}
 	case *ast.Field:
 		f := n.(*ast.Field)
-		switch(f.Type.(type)) {
+		switch f.Type.(type) {
 		case *ast.Ident:
 			t := f.Type.(*ast.Ident)
 			tname := t.Name
@@ -323,7 +320,7 @@ func analyze(info *StructInfo, n interface{}) {
 					panic("Bad array length value.  Must be a simple int.")
 				}
 			}
-			
+
 			subinfo := &StructInfo{}
 			pseudofield := &ast.Field{nil, nil, s.Elt, nil, nil}
 			analyze(subinfo, pseudofield)
@@ -364,15 +361,13 @@ func structmap(out io.Writer, n interface{}) {
 	analyze(info, st)
 	//fmt.Println("Analysis result: ", info)
 
-
 	b := new(bytes.Buffer)
 
 	//fmt.Println("ts: ", typeName)
 	mes := &EmitState{}
 	mes.op = MARSHAL
-	if (info.size < 64 && !info.varLen && !info.mustDispatch) {
+	if info.size < 64 && !info.varLen && !info.mustDispatch {
 		mes.isStatic = true
-		fmt.Fprintf(os.Stderr, "Hey!  I'm trying static\n")
 	}
 	walkContents(b, st, "t", "Marshal", marshalField, mes)
 	blen := 8
@@ -408,10 +403,10 @@ func structmap(out io.Writer, n interface{}) {
 		paramname = "rr"
 	}
 	fmt.Fprintf(out, "func (t *%s) Unmarshal(%s io.Reader) error {\n", typeName, paramname)
-	
+
 	if info.varLen {
-		fmt.Fprintln(out, 
-`var r byteReader
+		fmt.Fprintln(out,
+			`var r byteReader
 var ok bool
 if r, ok = rr.(byteReader); !ok {
     r = bufio.NewReader(rr)
@@ -456,7 +451,7 @@ ReadByte() (c byte, err error)
 	b.WriteTo(tf)
 	rest.WriteTo(tf)
 	tf.Sync()
-	
+
 	fset := token.NewFileSet()
 	ast, err := parser.ParseFile(fset, tfname, nil, 0)
 	if err != nil {
