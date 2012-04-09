@@ -94,9 +94,11 @@ func marshalField(b io.Writer, fname, tname string, es *EmitState) {
 
 func walkContents(b io.Writer, st *ast.StructType, pred string, funcname string, fn func(io.Writer, string, string, *EmitState), es *EmitState) {
 	for _, f := range st.Fields.List {
-		fname := f.Names[0].Name
-		newpred := pred + "." + fname
-		walkOne(b, f, newpred, funcname, fn, es)
+		for _, fNameEnt := range f.Names {
+			fname := fNameEnt.Name
+			newpred := pred + "." + fname
+			walkOne(b, f, newpred, funcname, fn, es)
+		}
 	}
 }
 
@@ -260,12 +262,9 @@ func mergeInfo(parent, child *StructInfo, childcount int) {
 	if child.maxSize > parent.maxSize {
 		parent.maxSize = child.maxSize
 	}
-	if child.varLen {
-		parent.varLen = true
-	}
-	if child.mustDispatch {
-		parent.mustDispatch = true
-	}
+	parent.varLen = parent.varLen || child.varLen
+	parent.mustDispatch = parent.mustDispatch || child.mustDispatch
+
 	if childcount > 0 {
 		parent.size += child.size * childcount
 	}
@@ -273,32 +272,28 @@ func mergeInfo(parent, child *StructInfo, childcount int) {
 }
 
 // Wouldn't it be nice to cache a lot of this? :-)
-func analyze(info *StructInfo, n interface{}) {
+func analyze(n interface{}) (info *StructInfo) {
+	info = new(StructInfo)
 	switch n.(type) {
 	case *ast.StructType:
 		st := n.(*ast.StructType)
 		for _, field := range st.Fields.List {
-			subinfo := &StructInfo{}
-			analyze(subinfo, field)
-			mergeInfo(info, subinfo, 1)
+			for _, _ = range field.Names {
+				mergeInfo(info, analyze(field), 1)
+			}
 		}
 	case *ast.Field:
 		f := n.(*ast.Field)
 		switch f.Type.(type) {
 		case *ast.Ident:
-			t := f.Type.(*ast.Ident)
-			tname := t.Name
+			tname := f.Type.(*ast.Ident).Name
 			if mapped, ok := typemap[tname]; ok {
 				tname = mapped
 			}
 			if tinfo, ok := typedb[tname]; ok {
-				if info.firstSize == 0 {
-					info.firstSize = tinfo.Size
-				}
-				if tinfo.Size > info.maxSize {
-					info.maxSize = tinfo.Size
-				}
-				info.size += tinfo.Size
+				info.firstSize = tinfo.Size
+				info.maxSize = tinfo.Size
+				info.size = tinfo.Size
 			} else {
 				info.mustDispatch = true
 			}
@@ -325,16 +320,15 @@ func analyze(info *StructInfo, n interface{}) {
 				}
 			}
 
-			subinfo := &StructInfo{}
 			pseudofield := &ast.Field{nil, nil, s.Elt, nil, nil}
-			analyze(subinfo, pseudofield)
-			mergeInfo(info, subinfo, arraylen)
+			mergeInfo(info, analyze(pseudofield), arraylen)
 		default:
 			panic("Unknown type in struct")
 		}
 	default:
 		panic("Unknown ast type")
 	}
+	return
 }
 
 func structmap(out io.Writer, n interface{}) {
@@ -361,8 +355,7 @@ func structmap(out io.Writer, n interface{}) {
 		}
 		panic("Can't handle decl!")
 	}
-	info := &StructInfo{}
-	analyze(info, st)
+	info := analyze(st)
 	//fmt.Println("Analysis result: ", info)
 
 	b := new(bytes.Buffer)
@@ -373,7 +366,6 @@ func structmap(out io.Writer, n interface{}) {
 	if info.size < 64 && !info.varLen && !info.mustDispatch {
 		mes.isStatic = true
 	}
-	walkContents(b, st, "t", "Marshal", marshalField, mes)
 	blen := 8
 	if info.varLen {
 		blen = 10
@@ -387,6 +379,7 @@ func structmap(out io.Writer, n interface{}) {
 		fmt.Fprintf(out, "bs := b[:%d]\n", info.firstSize)
 	}
 	mes.curBSize = info.firstSize
+	walkContents(b, st, "t", "Marshal", marshalField, mes)
 
 	b.WriteTo(out)
 	if mes.isStatic {
