@@ -358,7 +358,16 @@ func structmap(out io.Writer, n interface{}) {
 	info := analyze(st)
 	//fmt.Println("Analysis result: ", info)
 
+	fmt.Fprintf(out, "func (t *%s) BinarySize() (nbytes int, sizeKnown bool) {\n", typeName)
+	if !info.varLen && !info.mustDispatch {
+		fmt.Fprintf(out, "  return %d, true\n", info.size)
+	} else {
+		fmt.Fprintf(out, "return 0, false\n")
+	}
+	fmt.Fprintln(out, "}")
+
 	b := new(bytes.Buffer)
+
 
 	//fmt.Println("ts: ", typeName)
 	mes := &EmitState{}
