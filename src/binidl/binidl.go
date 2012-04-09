@@ -180,10 +180,6 @@ var typedb map[string]TypeInfo = map[string]TypeInfo{
 }
 
 func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io.Writer, string, string, *EmitState), es *EmitState) {
-	ioid := "w"
-	if es.op == UNMARSHAL {
-		ioid = "r"
-	}
 	switch f.Type.(type) {
 	case *ast.Ident:
 		t := f.Type.(*ast.Ident)
@@ -192,6 +188,12 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 		//se := f.Type.(*ast.SelectorExpr)
 		//fmt.Printf("%s.%s%s(&%s, w)\n",
 		//	se.X, funcname, se.Sel.Name, pred)
+		var ioid string
+		switch es.op {
+		case UNMARSHAL:  ioid = "r"
+		case MARSHAL:    ioid = "w"
+		}
+
 		fmt.Fprintf(b, "%s.%s(%s)\n",
 			pred, funcname, ioid)
 	case *ast.ArrayType:
@@ -201,7 +203,7 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 		alenid := es.getNewAlen()
 		if s.Len == nil {
 			// If we are unmarshaling we need to allocate.
-			if ioid == "r" {
+			if es.op == UNMARSHAL {
 				fmt.Fprintf(b, "%s, err := binary.ReadVarint(r)\n", alenid)
 				fmt.Fprintf(b, "if err != nil {\n")
 				fmt.Fprintf(b, "return err\n")
