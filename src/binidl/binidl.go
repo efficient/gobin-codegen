@@ -182,7 +182,9 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 	switch f.Type.(type) {
 	case *ast.Ident:
 		t := f.Type.(*ast.Ident)
-		if dispatchTo, ok := globalDeclMap[t.Name]; ok && es.isStatic {
+		_, is_mapped := typemap[t.Name]
+
+		if dispatchTo, ok := globalDeclMap[t.Name]; !is_mapped && ok && es.isStatic {
 			if strucType, ok := dispatchTo.Type.(*ast.StructType); ok {
 				walkContents(b, strucType, pred, funcname, fn, es)
 			} else {
@@ -252,6 +254,7 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 		}
 		es.freeIndexStr()
 	default:
+		fmt.Println("Unknown type: ", f)
 		panic("Unknown type in struct")
 	}
 }
@@ -341,6 +344,7 @@ func analyze(n interface{}) (info *StructInfo) {
 			pseudofield := &ast.Field{nil, nil, s.Elt, nil, nil}
 			mergeInfo(info, analyze(pseudofield), arraylen)
 		default:
+			fmt.Println("Unknown type in struct: ", f)
 			panic("Unknown type in struct")
 		}
 	default:
@@ -357,7 +361,7 @@ func analyzeType(typeName string) (info *StructInfo) {
 	
 	st, ok := ts.Type.(*ast.StructType)
 	if !ok {
-		if id, ok := ts.Type.(*ast.Ident); ok {
+  		if id, ok := ts.Type.(*ast.Ident); ok {
 			tname := id.Name
 			if _, ok := typedb[tname]; ok {
 				typemap[typeName] = tname
