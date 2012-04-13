@@ -10,7 +10,6 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"reflect"
 	"strconv"
 )
 
@@ -519,8 +518,4 @@ ReadByte() (c byte, err error)
 		panic(err.Error())
 	}
 	printer.Fprint(os.Stdout, fset, ast)
-}
-
-func let_me_keep_reflect_loaded_please() {
-	fmt.Println(reflect.TypeOf(0))
 }
