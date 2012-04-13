@@ -1,12 +1,12 @@
-package nulltest
+package encodedemo
 
-type Quack struct {
+type IsEmbedded struct {
 	X int
 	Y int
 }
 
-type Hi struct {
+type HasEmbedded struct {
 	A int
 	B int
-	C Quack
+	C IsEmbedded
 }

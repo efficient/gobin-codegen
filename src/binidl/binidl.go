@@ -67,7 +67,6 @@ func marshalField(b io.Writer, fname, tname string, es *EmitState) {
 	if mapped, ok := typemap[tname]; ok {
 		tname = mapped
 	}
-
 	ti, ok := typedb[tname]
 	if !ok {
 		fmt.Fprintf(b, "%s.Marshal(w)\n", fname)
@@ -183,7 +182,15 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 	switch f.Type.(type) {
 	case *ast.Ident:
 		t := f.Type.(*ast.Ident)
-		fn(b, pred, t.Name, es)
+		if dispatchTo, ok := globalDeclMap[t.Name]; ok && es.isStatic {
+			if strucType, ok := dispatchTo.Type.(*ast.StructType); ok {
+				walkContents(b, strucType, pred, funcname, fn, es)
+			} else {
+				panic("Eek, a type I don't handle properly")
+			}
+		} else {
+			fn(b, pred, t.Name, es)
+		}
 	case *ast.SelectorExpr:
 		//se := f.Type.(*ast.SelectorExpr)
 		//fmt.Printf("%s.%s%s(&%s, w)\n",
@@ -255,7 +262,10 @@ type StructInfo struct {
 	firstSize    int
 	varLen       bool
 	mustDispatch bool
+	totalSize    int // Including embedded types, if known
 }
+
+var structInfoMap map[string]*StructInfo 
 
 func mergeInfo(parent, child *StructInfo, childcount int) {
 	if parent.firstSize == 0 {
@@ -269,6 +279,7 @@ func mergeInfo(parent, child *StructInfo, childcount int) {
 
 	if childcount > 0 {
 		parent.size += child.size * childcount
+		parent.totalSize += child.totalSize * childcount
 	}
 
 }
@@ -297,7 +308,12 @@ func analyze(n interface{}) (info *StructInfo) {
 				info.maxSize = tinfo.Size
 				info.size = tinfo.Size
 			} else {
-				info.mustDispatch = true
+				seinfo := analyzeType(tname)
+				if (seinfo != nil && seinfo.mustDispatch == false && seinfo.varLen == false) {
+					mergeInfo(info, seinfo, 1)
+				} else {
+					info.mustDispatch = true
+				}
 			}
 			return
 		case *ast.SelectorExpr:
@@ -333,17 +349,28 @@ func analyze(n interface{}) (info *StructInfo) {
 	return
 }
 
-func structmap(out io.Writer, n interface{}) {
-	decl, ok := n.(*ast.GenDecl)
+func analyzeType(typeName string) (info *StructInfo) {
+	ts, ok := globalDeclMap[typeName]
 	if !ok {
-		return
+		return nil
 	}
-	//fmt.Println("Stmt: ", decl, " is ", reflect.TypeOf(decl))
-	if decl.Tok != token.TYPE {
-		return
+	
+	st, ok := ts.Type.(*ast.StructType)
+	if !ok {
+		if id, ok := ts.Type.(*ast.Ident); ok {
+			tname := id.Name
+			if _, ok := typedb[tname]; ok {
+				typemap[typeName] = tname
+				return
+			}
+		}
+		panic("Can't handle decl!")
 	}
-	//fmt.Println("Got a type!")
-	ts := decl.Specs[0].(*ast.TypeSpec)
+	info = analyze(st)
+	return
+}
+
+func structmap(out io.Writer, ts *ast.TypeSpec) {
 	typeName := ts.Name.Name
 	st, ok := ts.Type.(*ast.StructType)
 	if !ok {
@@ -406,6 +433,9 @@ func structmap(out io.Writer, n interface{}) {
 	if info.varLen {
 		blen = 10
 	}
+	if info.size < 64 && !info.varLen && !info.mustDispatch {
+		ues.isStatic = true
+	}
 	walkContents(b, st, "t", "Unmarshal", unmarshalField, ues)
 	paramname := "r"
 	if info.varLen {
@@ -428,9 +458,28 @@ if r, ok = rr.(byteReader); !ok {
 	return
 }
 
+var globalDeclMap map[string]*ast.TypeSpec = make(map[string]*ast.TypeSpec)
+
+func createGlobalDeclMap(decls []ast.Decl) {
+	for _, d := range decls {
+		decl, ok := d.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+		if decl.Tok != token.TYPE {
+			continue
+		}
+		//fmt.Println("Got a type!")
+		ts := decl.Specs[0].(*ast.TypeSpec)
+		decltypeName := ts.Name.Name
+		globalDeclMap[decltypeName] = ts
+	}
+}
+
 func (bf *Binidl) PrintGo() {
+	createGlobalDeclMap(bf.ast.Decls) // still a temporary hack
 	rest := new(bytes.Buffer)
-	for _, d := range bf.ast.Decls {
+	for _, d := range globalDeclMap {
 		structmap(rest, d)
 	}
 	b := new(bytes.Buffer)
