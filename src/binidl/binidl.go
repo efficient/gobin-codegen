@@ -16,16 +16,17 @@ import (
 type Binidl struct {
 	ast  *ast.File
 	fset *token.FileSet
+	bigEndian bool
 }
 
-func NewBinidl(filename string) *Binidl {
+func NewBinidl(filename string, bigEndian bool) *Binidl {
 	fset := token.NewFileSet()
 	ast, err := parser.ParseFile(fset, filename, nil, 0) // scanner.InsertSemis)
 	if err != nil {
 		fmt.Println("Error parsing", filename, ":", err)
 		return nil
 	}
-	return &Binidl{ast, fset}
+	return &Binidl{ast, fset, bigEndian}
 }
 
 func setbs(b io.Writer, n int, es *EmitState) {
@@ -58,7 +59,13 @@ return err
 	if ti.Size == 1 {
 		fmt.Fprintf(b, "%s = %s(b[0])\n", fname, tname)
 	} else {
-		fmt.Fprintf(b, "%s = %s(%s(bs))\n", fname, tname, decodeFunc[ti.EncodesAs])
+		endian := "Little"
+		if es.bigEndian {
+			endian = "Big"
+		}
+		df := fmt.Sprintf(decodeFunc[ti.EncodesAs], endian)
+
+		fmt.Fprintf(b, "%s = %s(%s(bs))\n", fname, tname, df)
 	}
 }
 
@@ -76,7 +83,11 @@ func marshalField(b io.Writer, fname, tname string, es *EmitState) {
 	if ti.Size == 1 {
 		fmt.Fprintf(b, "b[%d] = byte(%s)\n", es.Bstart(1), fname)
 	} else {
-		ef := encodeFunc[ti.EncodesAs]
+		endian := "Little"
+		if es.bigEndian {
+			endian = "Big"
+		}
+		ef := fmt.Sprintf(encodeFunc[ti.EncodesAs], endian)
 		if !es.isStatic {
 			fmt.Fprintf(b, "%s(bs, %s(%s))\n", ef, ti.EncodesAs, fname)
 		} else {
@@ -112,6 +123,7 @@ type EmitState struct {
 	staticOffset int
 	alenIdx      int
 	curBSize     int
+	bigEndian    bool // TODO:  This is duplicated now... integrate better.
 }
 
 func (es *EmitState) getNewAlen() string {
@@ -153,15 +165,15 @@ type TypeInfo struct {
 }
 
 var encodeFunc map[string]string = map[string]string{
-	"uint64": "binary.LittleEndian.PutUint64",
-	"uint32": "binary.LittleEndian.PutUint32",
-	"uint16": "binary.LittleEndian.PutUint16",
+	"uint64": "binary.%sEndian.PutUint64",
+	"uint32": "binary.%sEndian.PutUint32",
+	"uint16": "binary.%sEndian.PutUint16",
 }
 
 var decodeFunc map[string]string = map[string]string{
-	"uint64": "binary.LittleEndian.Uint64",
-	"uint32": "binary.LittleEndian.Uint32",
-	"uint16": "binary.LittleEndian.Uint16",
+	"uint64": "binary.%sEndian.Uint64",
+	"uint32": "binary.%sEndian.Uint32",
+	"uint16": "binary.%sEndian.Uint16",
 }
 
 var typedb map[string]TypeInfo = map[string]TypeInfo{
@@ -375,7 +387,7 @@ func analyzeType(typeName string) (info *StructInfo) {
 	return
 }
 
-func structmap(out io.Writer, ts *ast.TypeSpec) {
+func (bi *Binidl) structmap(out io.Writer, ts *ast.TypeSpec) {
 	typeName := ts.Name.Name
 	st, ok := ts.Type.(*ast.StructType)
 	if !ok {
@@ -403,7 +415,7 @@ func structmap(out io.Writer, ts *ast.TypeSpec) {
 	b := new(bytes.Buffer)
 
 	//fmt.Println("ts: ", typeName)
-	mes := &EmitState{}
+	mes := &EmitState{bigEndian: bi.bigEndian}
 	mes.op = MARSHAL
 	if info.size < 64 && !info.varLen && !info.mustDispatch {
 		mes.isStatic = true
@@ -430,7 +442,7 @@ func structmap(out io.Writer, ts *ast.TypeSpec) {
 	fmt.Fprintf(out, "}\n\n")
 
 	b.Reset()
-	ues := &EmitState{}
+	ues := &EmitState{bigEndian: bi.bigEndian}
 	ues.op = UNMARSHAL
 	ues.curBSize = info.firstSize
 	blen = 8
@@ -484,7 +496,7 @@ func (bf *Binidl) PrintGo() {
 	createGlobalDeclMap(bf.ast.Decls) // still a temporary hack
 	rest := new(bytes.Buffer)
 	for _, d := range globalDeclMap {
-		structmap(rest, d)
+		bf.structmap(rest, d)
 	}
 	b := new(bytes.Buffer)
 	fmt.Fprintln(b, "package", bf.ast.Name.Name)

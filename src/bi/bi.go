@@ -8,8 +8,10 @@ import (
 )
 
 func usage() {
-	fmt.Println("usage:  bi [-hgc] <input file.go>")
+	fmt.Println("usage:  bi [-B] <input file.go>")
 }
+
+var bigEndian *bool = flag.Bool("B", false, "Use big endian encoding (default: little)")
 
 func main() {
 	flag.Parse()
@@ -19,6 +21,6 @@ func main() {
 		os.Exit(-1)
 	}
 
-	bff := binidl.NewBinidl(flag.Arg(0))
+	bff := binidl.NewBinidl(flag.Arg(0), *bigEndian)
 	bff.PrintGo()
 }
