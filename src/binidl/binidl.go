@@ -198,8 +198,10 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 		//	se.X, funcname, se.Sel.Name, pred)
 		var ioid string
 		switch es.op {
-		case UNMARSHAL:  ioid = "r"
-		case MARSHAL:    ioid = "w"
+		case UNMARSHAL:
+			ioid = "r"
+		case MARSHAL:
+			ioid = "w"
 		}
 
 		fmt.Fprintf(b, "%s.%s(%s)\n",
@@ -241,7 +243,7 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 		}
 
 		fsub := fmt.Sprintf("%s[%s]", pred, i)
-		pseudofield := &ast.Field{nil, nil, s.Elt, nil, nil}
+		pseudofield := &ast.Field{Type: s.Elt}
 		if es.isStatic {
 			for idx := 0; idx < arrayLen; idx++ {
 				fsub := fmt.Sprintf("%s[%d]", pred, idx)
@@ -267,7 +269,7 @@ type StructInfo struct {
 	totalSize    int // Including embedded types, if known
 }
 
-var structInfoMap map[string]*StructInfo 
+var structInfoMap map[string]*StructInfo
 
 func mergeInfo(parent, child *StructInfo, childcount int) {
 	if parent.firstSize == 0 {
@@ -293,7 +295,7 @@ func analyze(n interface{}) (info *StructInfo) {
 	case *ast.StructType:
 		st := n.(*ast.StructType)
 		for _, field := range st.Fields.List {
-			for _, _ = range field.Names {
+			for _ = range field.Names {
 				mergeInfo(info, analyze(field), 1)
 			}
 		}
@@ -311,7 +313,7 @@ func analyze(n interface{}) (info *StructInfo) {
 				info.size = tinfo.Size
 			} else {
 				seinfo := analyzeType(tname)
-				if (seinfo != nil && seinfo.mustDispatch == false && seinfo.varLen == false) {
+				if seinfo != nil && seinfo.mustDispatch == false && seinfo.varLen == false {
 					mergeInfo(info, seinfo, 1)
 				} else {
 					info.mustDispatch = true
@@ -340,7 +342,7 @@ func analyze(n interface{}) (info *StructInfo) {
 				}
 			}
 
-			pseudofield := &ast.Field{nil, nil, s.Elt, nil, nil}
+			pseudofield := &ast.Field{Type: s.Elt}
 			mergeInfo(info, analyze(pseudofield), arraylen)
 		default:
 			fmt.Println("Unknown type in struct: ", f)
@@ -357,10 +359,10 @@ func analyzeType(typeName string) (info *StructInfo) {
 	if !ok {
 		return nil
 	}
-	
+
 	st, ok := ts.Type.(*ast.StructType)
 	if !ok {
-  		if id, ok := ts.Type.(*ast.Ident); ok {
+		if id, ok := ts.Type.(*ast.Ident); ok {
 			tname := id.Name
 			if _, ok := typedb[tname]; ok {
 				typemap[typeName] = tname
@@ -400,7 +402,6 @@ func structmap(out io.Writer, ts *ast.TypeSpec) {
 
 	b := new(bytes.Buffer)
 
-
 	//fmt.Println("ts: ", typeName)
 	mes := &EmitState{}
 	mes.op = MARSHAL
@@ -426,7 +427,7 @@ func structmap(out io.Writer, ts *ast.TypeSpec) {
 	if mes.isStatic {
 		fmt.Fprintln(out, "w.Write(b[:])")
 	}
-	fmt.Fprintln(out, "}\n")
+	fmt.Fprintf(out, "}\n\n")
 
 	b.Reset()
 	ues := &EmitState{}
@@ -457,7 +458,7 @@ if r, ok = rr.(byteReader); !ok {
 	fmt.Fprintf(out, "var b [%d]byte\n", blen)
 	fmt.Fprintf(out, "bs := b[:%d]\n", info.firstSize)
 	b.WriteTo(out)
-	fmt.Fprintln(out, "return nil\n}\n")
+	fmt.Fprintf(out, "return nil\n}\n\n")
 	return
 }
 
