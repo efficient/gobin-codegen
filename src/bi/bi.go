@@ -21,6 +21,6 @@ func main() {
 		os.Exit(-1)
 	}
 
-	bff := binidl.NewBinidl(flag.Arg(0), *bigEndian)
-	bff.PrintGo()
+	bi := binidl.NewBinidl(flag.Arg(0), *bigEndian)
+	bi.PrintGo()
 }
