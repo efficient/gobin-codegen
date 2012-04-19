@@ -48,13 +48,13 @@ func unmarshalField(b io.Writer, fname, tname string, es *EmitState) {
 
 	ti, ok := typedb[tconv]
 	if !ok {
-		fmt.Fprintf(b, "%s.Unmarshal(r)\n", fname)
+		fmt.Fprintf(b, "%s.Unmarshal(wire)\n", fname)
 		return
 	}
 
 	setbs(b, ti.Size, es)
 	fmt.Fprintln(b,
-		`if _, err := io.ReadFull(r, bs); err != nil {
+		`if _, err := io.ReadFull(wire, bs); err != nil {
 return err
 }`)
 	if ti.Size == 1 {
@@ -76,7 +76,7 @@ func marshalField(b io.Writer, fname, tname string, es *EmitState) {
 	}
 	ti, ok := typedb[tname]
 	if !ok {
-		fmt.Fprintf(b, "%s.Marshal(w)\n", fname)
+		fmt.Fprintf(b, "%s.Marshal(wire)\n", fname)
 		return
 	}
 
@@ -98,7 +98,7 @@ func marshalField(b io.Writer, fname, tname string, es *EmitState) {
 		}
 	}
 	if !es.isStatic {
-		fmt.Fprintln(b, "w.Write(bs)")
+		fmt.Fprintln(b, "wire.Write(bs)")
 	}
 }
 
@@ -204,19 +204,7 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 			fn(b, pred, t.Name, es)
 		}
 	case *ast.SelectorExpr:
-		//se := f.Type.(*ast.SelectorExpr)
-		//fmt.Printf("%s.%s%s(&%s, w)\n",
-		//	se.X, funcname, se.Sel.Name, pred)
-		var ioid string
-		switch es.op {
-		case UNMARSHAL:
-			ioid = "r"
-		case MARSHAL:
-			ioid = "w"
-		}
-
-		fmt.Fprintf(b, "%s.%s(%s)\n",
-			pred, funcname, ioid)
+		fmt.Fprintf(b, "%s.%s(wire)\n",	pred, funcname)
 	case *ast.ArrayType:
 		s := f.Type.(*ast.ArrayType)
 		i := es.getIndexStr()
@@ -225,7 +213,7 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 		if s.Len == nil {
 			// If we are unmarshaling we need to allocate.
 			if es.op == UNMARSHAL {
-				fmt.Fprintf(b, "%s, err := binary.ReadVarint(r)\n", alenid)
+				fmt.Fprintf(b, "%s, err := binary.ReadVarint(wire)\n", alenid)
 				fmt.Fprintf(b, "if err != nil {\n")
 				fmt.Fprintf(b, "return err\n")
 				fmt.Fprintf(b, "}\n")
@@ -234,7 +222,7 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 				setbs(b, 10, es)
 				fmt.Fprintf(b, "%s := int64(len(%s))\n", alenid, pred)
 				fmt.Fprintf(b, "if wlen := binary.PutVarint(bs, %s); wlen >= 0 {\n", alenid)
-				fmt.Fprintf(b, "w.Write(b[0:wlen])\n")
+				fmt.Fprintf(b, "wire.Write(b[0:wlen])\n")
 				fmt.Fprintf(b, "}\n")
 			}
 			fmt.Fprintf(b, "for %s := int64(0); %s < %s; %s++ {\n", i, i, alenid, i)
@@ -426,7 +414,7 @@ func (bi *Binidl) structmap(out io.Writer, ts *ast.TypeSpec) {
 	if mes.isStatic {
 		blen = info.size
 	}
-	fmt.Fprintf(out, "func (t *%s) Marshal(w io.Writer) {\n", typeName)
+	fmt.Fprintf(out, "func (t *%s) Marshal(wire io.Writer) {\n", typeName)
 	fmt.Fprintf(out, "var b [%d]byte\n", blen)
 	if !mes.isStatic {
 		fmt.Fprintf(out, "bs := b[:%d]\n", info.firstSize)
@@ -436,7 +424,7 @@ func (bi *Binidl) structmap(out io.Writer, ts *ast.TypeSpec) {
 
 	b.WriteTo(out)
 	if mes.isStatic {
-		fmt.Fprintln(out, "w.Write(b[:])")
+		fmt.Fprintln(out, "wire.Write(b[:])")
 	}
 	fmt.Fprintf(out, "}\n\n")
 
@@ -452,7 +440,7 @@ func (bi *Binidl) structmap(out io.Writer, ts *ast.TypeSpec) {
 		ues.isStatic = true
 	}
 	walkContents(b, st, "t", "Unmarshal", unmarshalField, ues)
-	paramname := "r"
+	paramname := "wire"
 	if info.varLen {
 		paramname = "rr"
 	}
@@ -460,10 +448,10 @@ func (bi *Binidl) structmap(out io.Writer, ts *ast.TypeSpec) {
 
 	if info.varLen {
 		fmt.Fprintln(out,
-			`var r byteReader
+			`var wire byteReader
 var ok bool
-if r, ok = rr.(byteReader); !ok {
-    r = bufio.NewReader(rr)
+if wire, ok = rr.(byteReader); !ok {
+    wire = bufio.NewReader(rr)
 }`)
 	}
 	fmt.Fprintf(out, "var b [%d]byte\n", blen)
