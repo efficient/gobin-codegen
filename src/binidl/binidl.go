@@ -399,9 +399,6 @@ func (bi *Binidl) structmap(out io.Writer, ts *ast.TypeSpec) {
 	}
 	fmt.Fprintln(out, "}")
 
-	b := new(bytes.Buffer)
-
-	//fmt.Println("ts: ", typeName)
 	mes := &EmitState{bigEndian: bi.bigEndian}
 	mes.op = MARSHAL
 	if info.size < 64 && !info.varLen && !info.mustDispatch {
@@ -420,15 +417,13 @@ func (bi *Binidl) structmap(out io.Writer, ts *ast.TypeSpec) {
 		fmt.Fprintf(out, "bs := b[:%d]\n", info.firstSize)
 	}
 	mes.curBSize = info.firstSize
-	walkContents(b, st, "t", "Marshal", marshalField, mes)
+	walkContents(out, st, "t", "Marshal", marshalField, mes)
 
-	b.WriteTo(out)
 	if mes.isStatic {
 		fmt.Fprintln(out, "wire.Write(b[:])")
 	}
 	fmt.Fprintf(out, "}\n\n")
 
-	b.Reset()
 	ues := &EmitState{bigEndian: bi.bigEndian}
 	ues.op = UNMARSHAL
 	ues.curBSize = info.firstSize
@@ -439,7 +434,6 @@ func (bi *Binidl) structmap(out io.Writer, ts *ast.TypeSpec) {
 	if info.size < 64 && !info.varLen && !info.mustDispatch {
 		ues.isStatic = true
 	}
-	walkContents(b, st, "t", "Unmarshal", unmarshalField, ues)
 	paramname := "wire"
 	if info.varLen {
 		paramname = "rr"
@@ -456,7 +450,7 @@ if wire, ok = rr.(byteReader); !ok {
 	}
 	fmt.Fprintf(out, "var b [%d]byte\n", blen)
 	fmt.Fprintf(out, "bs := b[:%d]\n", info.firstSize)
-	b.WriteTo(out)
+	walkContents(out, st, "t", "Unmarshal", unmarshalField, ues)
 	fmt.Fprintf(out, "return nil\n}\n\n")
 	return
 }
