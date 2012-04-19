@@ -11,11 +11,12 @@ import (
 	"io/ioutil"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Binidl struct {
-	ast  *ast.File
-	fset *token.FileSet
+	ast       *ast.File
+	fset      *token.FileSet
 	bigEndian bool
 }
 
@@ -132,13 +133,11 @@ func (es *EmitState) getNewAlen() string {
 }
 
 func (es *EmitState) getIndexStr() string {
-	indexes := []string{"i", "j", "k", "ii", "jj", "kk"}
-	if es.nextIdx > 5 {
-		panic("Array nesting depth too large.  Lazy programmer bites again.")
-	}
-	i := es.nextIdx
+	indexes := []string{"i", "j", "k"}
+	repeats := (es.nextIdx / len(indexes)) + 1
+	pos := es.nextIdx % len(indexes)
 	es.nextIdx++
-	return indexes[i]
+	return strings.Repeat(indexes[pos], repeats)
 }
 
 func (es *EmitState) freeIndexStr() {
