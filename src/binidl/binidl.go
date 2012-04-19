@@ -204,7 +204,7 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 			fn(b, pred, t.Name, es)
 		}
 	case *ast.SelectorExpr:
-		fmt.Fprintf(b, "%s.%s(wire)\n",	pred, funcname)
+		fmt.Fprintf(b, "%s.%s(wire)\n", pred, funcname)
 	case *ast.ArrayType:
 		s := f.Type.(*ast.ArrayType)
 		i := es.getIndexStr()
@@ -452,7 +452,6 @@ if wire, ok = rr.(byteReader); !ok {
 	fmt.Fprintf(out, "bs := b[:%d]\n", info.firstSize)
 	walkContents(out, st, "t", "Unmarshal", unmarshalField, ues)
 	fmt.Fprintf(out, "return nil\n}\n\n")
-	return
 }
 
 var globalDeclMap map[string]*ast.TypeSpec = make(map[string]*ast.TypeSpec)
@@ -460,16 +459,11 @@ var globalDeclMap map[string]*ast.TypeSpec = make(map[string]*ast.TypeSpec)
 func createGlobalDeclMap(decls []ast.Decl) {
 	for _, d := range decls {
 		decl, ok := d.(*ast.GenDecl)
-		if !ok {
+		if !ok  || decl.Tok != token.TYPE {
 			continue
 		}
-		if decl.Tok != token.TYPE {
-			continue
-		}
-		//fmt.Println("Got a type!")
 		ts := decl.Specs[0].(*ast.TypeSpec)
-		decltypeName := ts.Name.Name
-		globalDeclMap[decltypeName] = ts
+		globalDeclMap[ts.Name.Name] = ts
 	}
 }
 
@@ -479,30 +473,32 @@ func (bf *Binidl) PrintGo() {
 	for _, d := range globalDeclMap {
 		bf.structmap(rest, d)
 	}
-	b := new(bytes.Buffer)
-	fmt.Fprintln(b, "package", bf.ast.Name.Name)
+
+	tf, err := ioutil.TempFile("", "gobin-codegen")
+	if err != nil {
+		panic(err)
+	}
+	tfname := tf.Name()
+	defer os.Remove(tfname)
+	defer tf.Close()
+
+	fmt.Fprintln(tf, "package", bf.ast.Name.Name)
 	imports := []string{"io", "encoding/binary"}
 	if need_bufio {
 		imports = append(imports, "bufio")
 	}
-	fmt.Fprintln(b, "import (")
+	fmt.Fprintln(tf, "import (")
 	for _, imp := range imports {
-		fmt.Fprintf(b, "\"%s\"\n", imp)
+		fmt.Fprintf(tf, "\"%s\"\n", imp)
 	}
-	fmt.Fprintln(b, ")")
+	fmt.Fprintln(tf, ")")
 	if need_bufio {
-		fmt.Fprintln(b, `type byteReader interface {
+		fmt.Fprintln(tf, `type byteReader interface {
 io.Reader
 ReadByte() (c byte, err error)
 }`)
 	}
 	// Output and then gofmt it to make it pretty and shiny.  And readable.
-	tf, _ := ioutil.TempFile("", "gobin-codegen")
-	tfname := tf.Name()
-	defer os.Remove(tfname)
-	defer tf.Close()
-
-	b.WriteTo(tf)
 	rest.WriteTo(tf)
 	tf.Sync()
 
