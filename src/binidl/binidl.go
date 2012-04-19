@@ -318,10 +318,8 @@ func analyze(n interface{}) (info *StructInfo) {
 					info.mustDispatch = true
 				}
 			}
-			return
 		case *ast.SelectorExpr:
 			info.mustDispatch = true
-			return
 		case *ast.ArrayType:
 			s := f.Type.(*ast.ArrayType)
 			arraylen := 0
@@ -358,19 +356,19 @@ func analyzeType(typeName string) (info *StructInfo) {
 	if !ok {
 		return nil
 	}
-
-	st, ok := ts.Type.(*ast.StructType)
-	if !ok {
-		if id, ok := ts.Type.(*ast.Ident); ok {
-			tname := id.Name
-			if _, ok := typedb[tname]; ok {
-				typemap[typeName] = tname
-				return
-			}
-		}
-		panic("Can't handle decl!")
+	
+	if st, ok := ts.Type.(*ast.StructType); ok {
+		info = analyze(st)
 	}
-	info = analyze(st)
+	
+	if id, ok := ts.Type.(*ast.Ident); ok {
+		tname := id.Name
+		if _, ok := typedb[tname]; ok {
+			typemap[typeName] = tname
+			return
+		}
+	}
+	panic("Can't handle decl!")
 	return
 }
 
