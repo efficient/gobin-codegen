@@ -20,6 +20,10 @@ type Binidl struct {
 	bigEndian bool
 }
 
+const (
+	STATICMAX = 64 // Max size of an object for which we marshal into a stack-allocated local buffer
+)
+
 func NewBinidl(filename string, bigEndian bool) *Binidl {
 	fset := token.NewFileSet()
 	ast, err := parser.ParseFile(fset, filename, nil, 0) // scanner.InsertSemis)
@@ -105,8 +109,7 @@ func marshalField(b io.Writer, fname, tname string, es *EmitState) {
 func walkContents(b io.Writer, st *ast.StructType, pred string, funcname string, fn func(io.Writer, string, string, *EmitState), es *EmitState) {
 	for _, f := range st.Fields.List {
 		for _, fNameEnt := range f.Names {
-			fname := fNameEnt.Name
-			newpred := pred + "." + fname
+			newpred := pred + "." + fNameEnt.Name
 			walkOne(b, f, newpred, funcname, fn, es)
 		}
 	}
@@ -397,9 +400,8 @@ func (bi *Binidl) structmap(out io.Writer, ts *ast.TypeSpec) {
 	}
 	fmt.Fprintln(out, "}")
 
-	mes := &EmitState{bigEndian: bi.bigEndian}
-	mes.op = MARSHAL
-	if info.size < 64 && !info.varLen && !info.mustDispatch {
+	mes := &EmitState{bigEndian: bi.bigEndian, op: MARSHAL}
+	if info.size < STATICMAX && !info.varLen && !info.mustDispatch {
 		mes.isStatic = true
 	}
 	blen := 8
@@ -422,9 +424,7 @@ func (bi *Binidl) structmap(out io.Writer, ts *ast.TypeSpec) {
 	}
 	fmt.Fprintf(out, "}\n\n")
 
-	ues := &EmitState{bigEndian: bi.bigEndian}
-	ues.op = UNMARSHAL
-	ues.curBSize = info.firstSize
+	ues := &EmitState{bigEndian: bi.bigEndian, op: UNMARSHAL, curBSize: info.firstSize}
 	blen = 8
 	if info.varLen {
 		blen = 10
@@ -456,12 +456,10 @@ var globalDeclMap map[string]*ast.TypeSpec = make(map[string]*ast.TypeSpec)
 
 func createGlobalDeclMap(decls []ast.Decl) {
 	for _, d := range decls {
-		decl, ok := d.(*ast.GenDecl)
-		if !ok  || decl.Tok != token.TYPE {
-			continue
+		if decl, ok := d.(*ast.GenDecl); ok && decl.Tok == token.TYPE {
+			ts := decl.Specs[0].(*ast.TypeSpec)
+			globalDeclMap[ts.Name.Name] = ts
 		}
-		ts := decl.Specs[0].(*ast.TypeSpec)
-		globalDeclMap[ts.Name.Name] = ts
 	}
 }
 
