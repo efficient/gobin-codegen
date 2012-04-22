@@ -34,8 +34,8 @@ func NewBinidl(filename string, bigEndian bool) *Binidl {
 	return &Binidl{ast, fset, bigEndian}
 }
 
-func setbs(b io.Writer, n int, es *EmitState) {
-	if es.isStatic {
+func setbs(b io.Writer, n int, es *EmitState, force bool) {
+	if es.isStatic && !force {
 		return
 	}
 	if n != es.curBSize {
@@ -56,7 +56,7 @@ func unmarshalField(b io.Writer, fname, tname string, es *EmitState) {
 		return
 	}
 
-	setbs(b, ti.Size, es)
+	setbs(b, ti.Size, es, true)
 	fmt.Fprintln(b,
 		`if _, err := io.ReadFull(wire, bs); err != nil {
 return err
@@ -84,7 +84,7 @@ func marshalField(b io.Writer, fname, tname string, es *EmitState) {
 		return
 	}
 
-	setbs(b, ti.Size, es)
+	setbs(b, ti.Size, es, false)
 	if ti.Size == 1 {
 		fmt.Fprintf(b, "b[%d] = byte(%s)\n", es.Bstart(1), fname)
 	} else {
@@ -222,7 +222,7 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 				fmt.Fprintf(b, "}\n")
 				fmt.Fprintf(b, "%s = make([]%s, %s)\n", pred, s.Elt, alenid)
 			} else {
-				setbs(b, 10, es)
+				setbs(b, 10, es, false)
 				fmt.Fprintf(b, "%s := int64(len(%s))\n", alenid, pred)
 				fmt.Fprintf(b, "if wlen := binary.PutVarint(bs, %s); wlen >= 0 {\n", alenid)
 				fmt.Fprintf(b, "wire.Write(b[0:wlen])\n")
