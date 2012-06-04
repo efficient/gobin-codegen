@@ -400,6 +400,31 @@ func (bi *Binidl) structmap(out io.Writer, ts *ast.TypeSpec) {
 	}
 	fmt.Fprintln(out, "}")
 
+	fmt.Fprintf(out, "type %sCache struct {\n", typeName)
+	fmt.Fprintf(out, "  mu sync.Mutex\n")
+	fmt.Fprintf(out, "  cache []*%s\n", typeName)
+	fmt.Fprintf(out, "}\n\n")
+
+	fmt.Fprintf(out, "func (p *%sCache) Get() *%s {\n", typeName, typeName)
+	fmt.Fprintf(out, "var t *%s\n", typeName)
+	fmt.Fprintf(out, "p.mu.Lock()\n")
+	fmt.Fprintf(out, "if (len(p.cache) > 0) {\n")
+	fmt.Fprintf(out, "  t = p.cache[len(p.cache)-1]\n")
+	fmt.Fprintf(out, "  p.cache = p.cache[0:(len(p.cache)-1)]\n")
+	fmt.Fprintf(out, "}\n")
+	fmt.Fprintf(out, "p.mu.Unlock()\n")
+	fmt.Fprintf(out, "if t == nil { t = &%s{} }\n", typeName)
+	fmt.Fprintf(out, "return t")
+	fmt.Fprintf(out, "}\n")
+
+	// Currently relying on re-allocating any variable length arrays to handle
+	// properly zeroing out reused data structures.
+	fmt.Fprintf(out, "func (p *%sCache) Put(t *%s) {\n", typeName, typeName)
+	fmt.Fprintf(out, "p.mu.Lock()\n")
+	fmt.Fprintf(out, "p.cache = append(p.cache, t)\n")
+	fmt.Fprintf(out, "p.mu.Unlock()\n")
+	fmt.Fprintf(out, "}\n")
+
 	mes := &EmitState{bigEndian: bi.bigEndian, op: MARSHAL}
 	if info.size < STATICMAX && !info.varLen && !info.mustDispatch {
 		mes.isStatic = true
@@ -479,7 +504,7 @@ func (bf *Binidl) PrintGo() {
 	defer tf.Close()
 
 	fmt.Fprintln(tf, "package", bf.ast.Name.Name)
-	imports := []string{"io", "encoding/binary"}
+	imports := []string{"io", "encoding/binary", "sync"}
 	if need_bufio {
 		imports = append(imports, "bufio")
 	}
