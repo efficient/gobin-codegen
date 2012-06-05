@@ -56,13 +56,17 @@ func unmarshalField(b io.Writer, fname, tname string, es *EmitState) {
 		return
 	}
 
-	setbs(b, ti.Size, es, true)
-	fmt.Fprintln(b,
-		`if _, err := io.ReadFull(wire, bs); err != nil {
+	if !es.isStatic {
+		setbs(b, ti.Size, es, false)
+		fmt.Fprintln(b,
+			`if _, err := io.ReadFull(wire, bs); err != nil {
 return err
 }`)
+	}
+
+	bstart := es.Bstart(ti.Size)
 	if ti.Size == 1 {
-		fmt.Fprintf(b, "%s = %s(b[0])\n", fname, tname)
+		fmt.Fprintf(b, "%s = %s(b[%d])\n", fname, tname, bstart)
 	} else {
 		endian := "Little"
 		if es.bigEndian {
@@ -70,7 +74,11 @@ return err
 		}
 		df := fmt.Sprintf(decodeFunc[ti.EncodesAs], endian)
 
-		fmt.Fprintf(b, "%s = %s(%s(bs))\n", fname, tname, df)
+		if !es.isStatic {
+			fmt.Fprintf(b, "%s = %s(%s(bs))\n", fname, tname, df)
+		} else {
+			fmt.Fprintf(b, "%s = %s(%s(b[%d:%d]))\n", fname, tname, df, bstart, bstart+ti.Size)
+		}
 	}
 }
 
@@ -456,6 +464,7 @@ func (bi *Binidl) structmap(out io.Writer, ts *ast.TypeSpec) {
 	}
 	if info.size < 64 && !info.varLen && !info.mustDispatch {
 		ues.isStatic = true
+		blen = info.size
 	}
 	paramname := "wire"
 	if info.varLen {
@@ -472,7 +481,13 @@ if wire, ok = rr.(byteReader); !ok {
 }`)
 	}
 	fmt.Fprintf(out, "var b [%d]byte\n", blen)
-	fmt.Fprintf(out, "bs := b[:%d]\n", info.firstSize)
+	if (ues.isStatic) {
+		fmt.Fprintf(out, "bs := b[:%d]\n", blen)
+		fmt.Fprintf(out, "if _, err := io.ReadFull(wire, bs); err != nil {\n")
+		fmt.Fprintf(out, "return err\n}\n")
+	} else {
+		fmt.Fprintf(out, "bs := b[:%d]\n", info.firstSize)
+	}
 	walkContents(out, st, "t", "Unmarshal", unmarshalField, ues)
 	fmt.Fprintf(out, "return nil\n}\n\n")
 }
