@@ -65,17 +65,23 @@ return err
 	}
 
 	bstart := es.Bstart(ti.Size)
-	if ti.Size == 1 {
-		fmt.Fprintf(b, "%s = %s(b[%d])\n", fname, tname, bstart)
-	} else {
-		endian := "Little"
-		if es.bigEndian {
-			endian = "Big"
-		}
-		df := fmt.Sprintf(decodeFunc[ti.EncodesAs], endian)
-
-		if !es.isStatic {
+	endian := "Little"
+	if es.bigEndian {
+		endian = "Big"
+	}
+	df := fmt.Sprintf(decodeFunc[ti.EncodesAs], endian)
+	
+	if !es.isStatic {
+		if ildf, found := inlineDecode[ti.EncodesAs]; found {
+			ild := ildf("bs", 0, es)
+			fmt.Fprintf(b, "%s = %s(%s)\n", fname, tname, ild)
+		} else {
 			fmt.Fprintf(b, "%s = %s(%s(bs))\n", fname, tname, df)
+		}
+	} else {
+		if ildf, found := inlineDecode[ti.EncodesAs]; found {
+			ild := ildf("b", bstart, es)
+			fmt.Fprintf(b, "%s = %s(%s)\n", fname, tname, ild)
 		} else {
 			fmt.Fprintf(b, "%s = %s(%s(b[%d:%d]))\n", fname, tname, df, bstart, bstart+ti.Size)
 		}
@@ -180,6 +186,32 @@ var encodeFunc map[string]string = map[string]string{
 	"uint16": "binary.%sEndian.PutUint16",
 }
 
+type decodefunc func(string,int,*EmitState) string
+
+func ilByte(b string, offset int, es *EmitState) string {
+	return fmt.Sprintf("%s[%d]", b, offset)
+}
+
+func ilUint16(b string, offset int, es *EmitState) string {
+	if es.bigEndian {
+		return fmt.Sprintf("((uint16(%s[%d]) << 8) | uint16(%s[%d]))", b, offset, b, offset+1)
+	} 
+	return fmt.Sprintf("(uint16(%s[%d]) | uint16(%s[%d]) << 8)", b, offset, b, offset+1)
+}
+
+func ilUint32(b string, offset int, es *EmitState) string {
+	if es.bigEndian {
+		return fmt.Sprintf("((uint32(%s[%d]) << 24) | (uint32(%s[%d]) << 16)  | (uint32(%s[%d]) << 8) | uint32(%s[%d]))", b, offset, b, offset+1, b, offset+2, b, offset+3)
+	} 
+	return fmt.Sprintf("(uint32(%s[%d]) | (uint32(%s[%d]) << 8)  | (uint32(%s[%d]) << 16) | (uint32(%s[%d]) << 24))", b, offset, b, offset+1, b, offset+2, b, offset+3)
+}
+
+var inlineDecode map[string]decodefunc = map[string]decodefunc {
+	"byte": ilByte,
+	"uint16": ilUint16,
+	"uint32": ilUint32,
+}
+
 var decodeFunc map[string]string = map[string]string{
 	"uint64": "binary.%sEndian.Uint64",
 	"uint32": "binary.%sEndian.Uint32",
@@ -198,6 +230,7 @@ var typedb map[string]TypeInfo = map[string]TypeInfo{
 	"uint8":  {"uint8", 1, "byte"},
 	"byte":   {"byte", 1, "byte"},
 }
+
 
 func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io.Writer, string, string, *EmitState), es *EmitState) {
 	switch f.Type.(type) {
