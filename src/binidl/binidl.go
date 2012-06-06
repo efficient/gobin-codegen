@@ -58,10 +58,9 @@ func unmarshalField(b io.Writer, fname, tname string, es *EmitState) {
 
 	if !es.isStatic {
 		setbs(b, ti.Size, es, false)
-		fmt.Fprintln(b,
-			`if _, err := io.ReadFull(wire, bs); err != nil {
-return err
-}`)
+		fmt.Fprintf(b, "if _, err := io.ReadAtLeast(wire, bs, %d); err != nil {\n", ti.Size)
+		fmt.Fprintf(b, " return err\n")
+		fmt.Fprintf(b, "}\n")
 	}
 
 	bstart := es.Bstart(ti.Size)
@@ -71,15 +70,16 @@ return err
 	}
 	df := fmt.Sprintf(decodeFunc[ti.EncodesAs], endian)
 	
+	ildf, found := inlineDecode[ti.EncodesAs]
 	if !es.isStatic {
-		if ildf, found := inlineDecode[ti.EncodesAs]; found {
+		if found {
 			ild := ildf("bs", 0, es)
 			fmt.Fprintf(b, "%s = %s(%s)\n", fname, tname, ild)
 		} else {
 			fmt.Fprintf(b, "%s = %s(%s(bs))\n", fname, tname, df)
 		}
 	} else {
-		if ildf, found := inlineDecode[ti.EncodesAs]; found {
+		if found {
 			ild := ildf("b", bstart, es)
 			fmt.Fprintf(b, "%s = %s(%s)\n", fname, tname, ild)
 		} else {
@@ -515,8 +515,8 @@ if wire, ok = rr.(byteReader); !ok {
 	}
 	fmt.Fprintf(out, "var b [%d]byte\n", blen)
 	if (ues.isStatic) {
-		fmt.Fprintf(out, "bs := b[:%d]\n", blen)
-		fmt.Fprintf(out, "if _, err := io.ReadFull(wire, bs); err != nil {\n")
+		fmt.Fprintf(out, "bs := b[:]\n")
+		fmt.Fprintf(out, "if _, err := io.ReadAtLeast(wire, bs, %d); err != nil {\n", blen)
 		fmt.Fprintf(out, "return err\n}\n")
 	} else {
 		fmt.Fprintf(out, "bs := b[:%d]\n", info.firstSize)
