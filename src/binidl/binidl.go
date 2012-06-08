@@ -485,7 +485,7 @@ func (bi *Binidl) structmap(out io.Writer, ts *ast.TypeSpec) {
 	fmt.Fprintf(out, "  mu sync.Mutex\n")
 	fmt.Fprintf(out, "  cache []*%s\n", typeName)
 	fmt.Fprintf(out, "}\n\n")
-	fmt.Fprintf(out, "func New%sCache() *%sCache {\nreturn &%sCache{}\n}\n\n", typeName, typeName, typeName)
+    fmt.Fprintf(out, "func New%sCache() *%sCache {\nc := &%sCache{}\nc.cache = make([]*%s, 0)\nreturn c\n}\n\n", typeName, typeName, typeName, typeName)
 
 	fmt.Fprintf(out, "func (p *%sCache) Get() *%s {\n", typeName, typeName)
 	fmt.Fprintf(out, "var t *%s\n", typeName)
@@ -593,7 +593,7 @@ func (bf *Binidl) PrintGo() {
 	defer tf.Close()
 
 	fmt.Fprintln(tf, "package", bf.ast.Name.Name)
-	imports := []string{"io", "encoding/binary", "sync"}
+	imports := []string{"io", "sync"}
 	if need_bufio {
 		imports = append(imports, "bufio")
 	}
