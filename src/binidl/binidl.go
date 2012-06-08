@@ -56,7 +56,9 @@ func unmarshalField(b io.Writer, fname, tname string, es *EmitState) {
 		return
 	}
 
+	source := "b"
 	if !es.isStatic {
+		source = "bs"
 		setbs(b, ti.Size, es, false)
 		fmt.Fprintf(b, "if _, err := io.ReadAtLeast(wire, bs, %d); err != nil {\n", ti.Size)
 		fmt.Fprintf(b, " return err\n")
@@ -64,24 +66,18 @@ func unmarshalField(b io.Writer, fname, tname string, es *EmitState) {
 	}
 
 	bstart := es.Bstart(ti.Size)
-	endian := "Little"
-	if es.bigEndian {
-		endian = "Big"
-	}
-	df := fmt.Sprintf(decodeFunc[ti.EncodesAs], endian)
-	
-	ildf, found := inlineDecode[ti.EncodesAs]
-	if !es.isStatic {
-		if found {
-			ild := ildf("bs", 0, es)
-			fmt.Fprintf(b, "%s = %s(%s)\n", fname, tname, ild)
-		} else {
-			fmt.Fprintf(b, "%s = %s(%s(bs))\n", fname, tname, df)
-		}
+
+	if ildf, found := inlineDecode[ti.EncodesAs]; found {
+		ild := ildf(source, bstart, es)
+		fmt.Fprintf(b, "%s = %s(%s)\n", fname, tname, ild)
 	} else {
-		if found {
-			ild := ildf("b", bstart, es)
-			fmt.Fprintf(b, "%s = %s(%s)\n", fname, tname, ild)
+		endian := "Little"
+		if es.bigEndian {
+			endian = "Big"
+		}
+		df := fmt.Sprintf(decodeFunc[ti.EncodesAs], endian)
+		if !es.isStatic {
+			fmt.Fprintf(b, "%s = %s(%s(bs))\n", fname, tname, df)
 		} else {
 			fmt.Fprintf(b, "%s = %s(%s(b[%d:%d]))\n", fname, tname, df, bstart, bstart+ti.Size)
 		}
@@ -99,8 +95,14 @@ func marshalField(b io.Writer, fname, tname string, es *EmitState) {
 	}
 
 	setbs(b, ti.Size, es, false)
-	if ti.Size == 1 {
-		fmt.Fprintf(b, "b[%d] = byte(%s)\n", es.Bstart(1), fname)
+	ilef, found := inlineEncode[ti.EncodesAs]
+	bstart := es.Bstart(ti.Size)
+	encodefrom := "bs"
+	if es.isStatic {
+		encodefrom = "b"
+	}
+	if found {
+		fmt.Fprintf(b, "%s\n", ilef(encodefrom, bstart, fname, es))
 	} else {
 		endian := "Little"
 		if es.bigEndian {
@@ -110,7 +112,6 @@ func marshalField(b io.Writer, fname, tname string, es *EmitState) {
 		if !es.isStatic {
 			fmt.Fprintf(b, "%s(bs, %s(%s))\n", ef, ti.EncodesAs, fname)
 		} else {
-			bstart := es.Bstart(ti.Size)
 			bend := bstart + ti.Size
 			fmt.Fprintf(b, "%s(b[%d:%d], %s(%s))\n", ef, bstart, bend, ti.EncodesAs, fname)
 		}
@@ -142,6 +143,7 @@ type EmitState struct {
 	alenIdx      int
 	curBSize     int
 	bigEndian    bool // TODO:  This is duplicated now... integrate better.
+	tmp32exists  bool
 }
 
 func (es *EmitState) getNewAlen() string {
@@ -186,7 +188,45 @@ var encodeFunc map[string]string = map[string]string{
 	"uint16": "binary.%sEndian.PutUint16",
 }
 
-type decodefunc func(string,int,*EmitState) string
+type encodefunc func(string, int, string, *EmitState) string
+
+func ilByteOut(b string, offset int, target string, es *EmitState) string {
+	return fmt.Sprintf("%s[%d] = byte(%s)", b, offset, target)
+}
+
+func ilUint16Out(b string, offset int, target string, es *EmitState) string {
+	if !es.bigEndian {
+		return fmt.Sprintf("%s[%d] = byte(%s)\n%s[%d] = byte(%s >> 8)",
+			b, offset, target, b, offset+1, target)
+	}
+	return fmt.Sprintf("%s[%d] = byte(%s >> 8)\n%s[%d] = byte(%s)",
+		b, offset, target, b, offset+1, target)
+}
+
+func ilUint32Out(b string, offset int, target string, es *EmitState) string {
+	tmp32 := ""
+	if !es.tmp32exists {
+		tmp32 = fmt.Sprintf("tmp32 := %s\n", target)
+		es.tmp32exists = true
+	} else {
+		tmp32 = fmt.Sprintf("tmp32 = %s\n", target)
+	}
+	target = "tmp32"
+	if !es.bigEndian {
+		return fmt.Sprintf("%s%s[%d] = byte(%s)\n%s[%d] = byte(%s >> 8)\n%s[%d] = byte(%s >> 16)\n%s[%d] = byte(%s >> 24)",
+			tmp32, b, offset, target, b, offset+1, target, b, offset+2, target, b, offset+3, target)
+	}
+	return fmt.Sprintf("%s%s[%d] = byte(%s >> 24)\n%s[%d] = byte(%s >> 16)\n%s[%d] = byte(%s >> 8)\n%s[%d] = byte(%s)",
+		tmp32, b, offset, target, b, offset+1, target, b, offset+2, target, b, offset+3, target)
+}
+
+var inlineEncode map[string]encodefunc = map[string]encodefunc{
+	"byte":   ilByteOut,
+	"uint16": ilUint16Out,
+	"uint32": ilUint32Out,
+}
+
+type decodefunc func(string, int, *EmitState) string
 
 func ilByte(b string, offset int, es *EmitState) string {
 	return fmt.Sprintf("%s[%d]", b, offset)
@@ -195,19 +235,19 @@ func ilByte(b string, offset int, es *EmitState) string {
 func ilUint16(b string, offset int, es *EmitState) string {
 	if es.bigEndian {
 		return fmt.Sprintf("((uint16(%s[%d]) << 8) | uint16(%s[%d]))", b, offset, b, offset+1)
-	} 
+	}
 	return fmt.Sprintf("(uint16(%s[%d]) | uint16(%s[%d]) << 8)", b, offset, b, offset+1)
 }
 
 func ilUint32(b string, offset int, es *EmitState) string {
 	if es.bigEndian {
 		return fmt.Sprintf("((uint32(%s[%d]) << 24) | (uint32(%s[%d]) << 16)  | (uint32(%s[%d]) << 8) | uint32(%s[%d]))", b, offset, b, offset+1, b, offset+2, b, offset+3)
-	} 
+	}
 	return fmt.Sprintf("(uint32(%s[%d]) | (uint32(%s[%d]) << 8)  | (uint32(%s[%d]) << 16) | (uint32(%s[%d]) << 24))", b, offset, b, offset+1, b, offset+2, b, offset+3)
 }
 
-var inlineDecode map[string]decodefunc = map[string]decodefunc {
-	"byte": ilByte,
+var inlineDecode map[string]decodefunc = map[string]decodefunc{
+	"byte":   ilByte,
 	"uint16": ilUint16,
 	"uint32": ilUint32,
 }
@@ -230,7 +270,6 @@ var typedb map[string]TypeInfo = map[string]TypeInfo{
 	"uint8":  {"uint8", 1, "byte"},
 	"byte":   {"byte", 1, "byte"},
 }
-
 
 func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io.Writer, string, string, *EmitState), es *EmitState) {
 	switch f.Type.(type) {
@@ -400,11 +439,12 @@ func analyzeType(typeName string) (info *StructInfo) {
 	if !ok {
 		return nil
 	}
-	
+
 	if st, ok := ts.Type.(*ast.StructType); ok {
 		info = analyze(st)
+		return info
 	}
-	
+
 	if id, ok := ts.Type.(*ast.Ident); ok {
 		tname := id.Name
 		if _, ok := typedb[tname]; ok {
@@ -412,7 +452,7 @@ func analyzeType(typeName string) (info *StructInfo) {
 			return
 		}
 	}
-	panic("Can't handle decl!")
+	panic("Can't handle decl: " + typeName)
 	return
 }
 
@@ -515,7 +555,7 @@ if wire, ok = rr.(byteReader); !ok {
 }`)
 	}
 	fmt.Fprintf(out, "var b [%d]byte\n", blen)
-	if (ues.isStatic) {
+	if ues.isStatic {
 		fmt.Fprintf(out, "bs := b[:]\n")
 		fmt.Fprintf(out, "if _, err := io.ReadAtLeast(wire, bs, %d); err != nil {\n", blen)
 		fmt.Fprintf(out, "return err\n}\n")
