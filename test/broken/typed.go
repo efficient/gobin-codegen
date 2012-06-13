@@ -1,4 +1,4 @@
-package foo
+package encodedemo
 
 type Value int64
 
