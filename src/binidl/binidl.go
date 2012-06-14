@@ -34,10 +34,7 @@ func NewBinidl(filename string, bigEndian bool) *Binidl {
 	return &Binidl{ast, fset, bigEndian}
 }
 
-func setbs(b io.Writer, n int, es *EmitState, force bool) {
-	if es.isStatic && !force {
-		return
-	}
+func setbs(b io.Writer, n int, es *EmitState) {
 	if n != es.curBSize {
 		fmt.Fprintf(b, "bs = b[:%d]\n", n)
 	}
@@ -56,27 +53,28 @@ func unmarshalField(b io.Writer, fname, tname string, es *EmitState) {
 		return
 	}
 
+	bstart := es.Bstart(ti.Size)
 	source := "b"
-	if !es.isStatic {
+	if es.resetBuffer {
 		source = "bs"
-		setbs(b, ti.Size, es, false)
+		setbs(b, ti.Size, es)
+		bstart = 0
 		fmt.Fprintf(b, "if _, err := io.ReadAtLeast(wire, bs, %d); err != nil {\n", ti.Size)
 		fmt.Fprintf(b, " return err\n")
 		fmt.Fprintf(b, "}\n")
 	}
 
-	bstart := es.Bstart(ti.Size)
-
 	if ildf, found := inlineDecode[ti.EncodesAs]; found {
 		ild := ildf(source, bstart, es)
 		fmt.Fprintf(b, "%s = %s(%s)\n", fname, tname, ild)
 	} else {
+		need_binary = true
 		endian := "Little"
 		if es.bigEndian {
 			endian = "Big"
 		}
 		df := fmt.Sprintf(decodeFunc[ti.EncodesAs], endian)
-		if !es.isStatic {
+		if es.resetBuffer {
 			fmt.Fprintf(b, "%s = %s(%s(bs))\n", fname, tname, df)
 		} else {
 			fmt.Fprintf(b, "%s = %s(%s(b[%d:%d]))\n", fname, tname, df, bstart, bstart+ti.Size)
@@ -94,39 +92,60 @@ func marshalField(b io.Writer, fname, tname string, es *EmitState) {
 		return
 	}
 
-	setbs(b, ti.Size, es, false)
 	ilef, found := inlineEncode[ti.EncodesAs]
 	bstart := es.Bstart(ti.Size)
-	encodefrom := "bs"
-	if es.isStatic {
-		encodefrom = "b"
+	encodefrom := "b"
+	if es.resetBuffer {
+		setbs(b, ti.Size, es)
+		encodefrom = "bs"
+		bstart = 0
 	}
 	if found {
 		fmt.Fprintf(b, "%s\n", ilef(encodefrom, bstart, fname, es))
-	} else {
+	} else { 
+		need_binary = true
 		endian := "Little"
 		if es.bigEndian {
 			endian = "Big"
 		}
 		ef := fmt.Sprintf(encodeFunc[ti.EncodesAs], endian)
-		if !es.isStatic {
+		if es.resetBuffer {
 			fmt.Fprintf(b, "%s(bs, %s(%s))\n", ef, ti.EncodesAs, fname)
 		} else {
 			bend := bstart + ti.Size
 			fmt.Fprintf(b, "%s(b[%d:%d], %s(%s))\n", ef, bstart, bend, ti.EncodesAs, fname)
 		}
 	}
-	if !es.isStatic {
+	if es.resetBuffer {
 		fmt.Fprintln(b, "wire.Write(bs)")
 	}
 }
 
-func walkContents(b io.Writer, st *ast.StructType, pred string, funcname string, fn func(io.Writer, string, string, *EmitState), es *EmitState) {
+func walkContents(b io.Writer, st *ast.StructType, pred string, funcname string, fn func(io.Writer, string, string, *EmitState), es *EmitState, writeBuffer bool) {
 	for _, f := range st.Fields.List {
 		for _, fNameEnt := range f.Names {
 			newpred := pred + "." + fNameEnt.Name
-			walkOne(b, f, newpred, funcname, fn, es)
+			if t, ok := f.Type.(*ast.Ident); ok {
+				_, simple := simpleStructMap[t.Name]
+				if _, basic := typedb[t.Name]; basic || simple {
+					walkOne(b, f, newpred, funcname, fn, es)
+					continue
+				}
+			}
+			if a, oka := f.Type.(*ast.ArrayType); oka {
+				if t, ok := a.Elt.(*ast.Ident); ok { 
+					_, simple := simpleStructMap[t.Name]
+					if _, basic := typedb[t.Name]; a.Len != nil && (basic || simple) {
+						walkOne(b, f, newpred, funcname, fn, es)
+						continue
+					}
+				}
+			}
+			defer walkOne(b, f, newpred, funcname, fn, es)
 		}
+	}
+	if writeBuffer {
+		fmt.Fprintln(b, "wire.Write(b[:])")
 	}
 }
 
@@ -136,14 +155,15 @@ const (
 )
 
 type EmitState struct {
-	op           int // MARSHAL, UNMARSHAL
-	nextIdx      int
-	isStatic     bool
-	staticOffset int
-	alenIdx      int
-	curBSize     int
-	bigEndian    bool // TODO:  This is duplicated now... integrate better.
-	tmp32exists  bool
+	op				int // MARSHAL, UNMARSHAL
+	nextIdx			int
+	staticOffset	int
+	alenIdx			int
+	curBSize		int
+	bigEndian		bool // TODO:  This is duplicated now... integrate better.
+	tmp32exists		bool
+	tmp64exists		bool
+	resetBuffer		bool
 }
 
 func (es *EmitState) getNewAlen() string {
@@ -164,15 +184,13 @@ func (es *EmitState) freeIndexStr() {
 }
 
 func (es *EmitState) Bstart(n int) int {
-	if !es.isStatic {
-		return 0
-	}
 	o := es.staticOffset
 	es.staticOffset += n
 	return o
 }
 
 var need_bufio = false
+var need_binary = false
 
 var typemap map[string]string = make(map[string]string)
 
@@ -220,10 +238,29 @@ func ilUint32Out(b string, offset int, target string, es *EmitState) string {
 		tmp32, b, offset, target, b, offset+1, target, b, offset+2, target, b, offset+3, target)
 }
 
+func ilUint64Out(b string, offset int, target string, es *EmitState) string {
+	tmp64 := ""
+	if !es.tmp64exists {
+		tmp64 = fmt.Sprintf("tmp64 := %s\n", target)
+		es.tmp64exists = true
+	} else {
+		tmp64 = fmt.Sprintf("tmp64 = %s\n", target)
+	}
+	target = "tmp64"
+	if !es.bigEndian {
+		return fmt.Sprintf("%s%s[%d] = byte(%s)\n%s[%d] = byte(%s >> 8)\n%s[%d] = byte(%s >> 16)\n%s[%d] = byte(%s >> 24)\n%s[%d] = byte(%s >> 32)\n%s[%d] = byte(%s >> 40)\n%s[%d] = byte(%s >> 48)\n%s[%d] = byte(%s >> 56)",
+			tmp64, b, offset, target, b, offset+1, target, b, offset+2, target, b, offset+3, target, b, offset+4, target, b, offset+5, target, b, offset+6, target, b, offset+7, target)
+	}
+	return fmt.Sprintf("%s%s[%d] = byte(%s >> 56)\n%s[%d] = byte(%s >> 48)\n%s[%d] = byte(%s >> 40)\n%s[%d] = byte(%s >> 32)\n%s[%d] = byte(%s >> 24)\n%s[%d] = byte(%s >> 16)\n%s[%d] = byte(%s >> 8)\n%s[%d] = byte(%s)",
+		tmp64, b, offset, target, b, offset+1, target, b, offset+2, target, b, offset+3, target, b, offset+4, target, b, offset+5, target, b, offset+6, target, b, offset+7, target)
+}
+
+
 var inlineEncode map[string]encodefunc = map[string]encodefunc{
 	"byte":   ilByteOut,
 	"uint16": ilUint16Out,
 	"uint32": ilUint32Out,
+    "uint64": ilUint64Out,
 }
 
 type decodefunc func(string, int, *EmitState) string
@@ -246,10 +283,19 @@ func ilUint32(b string, offset int, es *EmitState) string {
 	return fmt.Sprintf("(uint32(%s[%d]) | (uint32(%s[%d]) << 8)  | (uint32(%s[%d]) << 16) | (uint32(%s[%d]) << 24))", b, offset, b, offset+1, b, offset+2, b, offset+3)
 }
 
+func ilUint64(b string, offset int, es *EmitState) string {
+	if es.bigEndian {
+		return fmt.Sprintf("((uint64(%s[%d]) << 56) | (uint64(%s[%d]) << 48)  | (uint64(%s[%d]) << 40) | (uint64(%s[%d]) << 32) | (uint64(%s[%d]) << 24) | (uint64(%s[%d]) << 16) | (uint64(%s[%d]) << 8) | uint64(%s[%d]))", b, offset, b, offset+1, b, offset+2, b, offset+3, b, offset+4, b, offset+5, b, offset+6, b, offset+7)
+	}
+	return fmt.Sprintf("(uint64(%s[%d]) | (uint64(%s[%d]) << 8)  | (uint64(%s[%d]) << 16) | (uint64(%s[%d]) << 24) | (uint64(%s[%d]) << 32) | (uint64(%s[%d]) << 40)  | (uint64(%s[%d]) << 48) | (uint64(%s[%d]) << 56))", b, offset, b, offset+1, b, offset+2, b, offset+3, b, offset+4, b, offset+5, b, offset+6, b, offset+7)
+}
+
+
 var inlineDecode map[string]decodefunc = map[string]decodefunc{
 	"byte":   ilByte,
 	"uint16": ilUint16,
 	"uint32": ilUint32,
+	"uint64": ilUint64,
 }
 
 var decodeFunc map[string]string = map[string]string{
@@ -276,10 +322,11 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 	case *ast.Ident:
 		t := f.Type.(*ast.Ident)
 		_, is_mapped := typemap[t.Name]
+		_, simple := simpleStructMap[t.Name]
 
-		if dispatchTo, ok := globalDeclMap[t.Name]; !is_mapped && ok && es.isStatic {
+		if dispatchTo, ok := globalDeclMap[t.Name]; !is_mapped && ok && simple {
 			if strucType, ok := dispatchTo.Type.(*ast.StructType); ok {
-				walkContents(b, strucType, pred, funcname, fn, es)
+				walkContents(b, strucType, pred, funcname, fn, es, false)
 			} else {
 				panic("Eek, a type I don't handle properly")
 			}
@@ -295,6 +342,7 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 		alenid := es.getNewAlen()
 		if s.Len == nil {
 			// If we are unmarshaling we need to allocate.
+			need_binary = true
 			if es.op == UNMARSHAL {
 				fmt.Fprintf(b, "%s, err := binary.ReadVarint(wire)\n", alenid)
 				fmt.Fprintf(b, "if err != nil {\n")
@@ -302,13 +350,20 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 				fmt.Fprintf(b, "}\n")
 				fmt.Fprintf(b, "%s = make([]%s, %s)\n", pred, s.Elt, alenid)
 			} else {
-				setbs(b, 10, es, false)
+				//setbs(b, 10, es, false)
+				fmt.Fprintf(b, "bs = b[:]\n")
 				fmt.Fprintf(b, "%s := int64(len(%s))\n", alenid, pred)
 				fmt.Fprintf(b, "if wlen := binary.PutVarint(bs, %s); wlen >= 0 {\n", alenid)
 				fmt.Fprintf(b, "wire.Write(b[0:wlen])\n")
 				fmt.Fprintf(b, "}\n")
 			}
 			fmt.Fprintf(b, "for %s := int64(0); %s < %s; %s++ {\n", i, i, alenid, i)
+			fsub := fmt.Sprintf("%s[%s]", pred, i)
+			pseudofield := &ast.Field{Type: s.Elt}
+			es.resetBuffer = true
+			walkOne(b, pseudofield, fsub, funcname, fn, es)
+			es.resetBuffer = false
+			fmt.Fprintln(b, "}")
 		} else {
 			e, ok := s.Len.(*ast.BasicLit)
 			if !ok {
@@ -319,21 +374,11 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 			if err != nil {
 				panic("Bad array length value.  Must be a simple int.")
 			}
-			if !es.isStatic {
-				fmt.Fprintf(b, "for %s := 0; %s < %d; %s++ {\n", i, i, arrayLen, i)
-			}
-		}
-
-		fsub := fmt.Sprintf("%s[%s]", pred, i)
-		pseudofield := &ast.Field{Type: s.Elt}
-		if es.isStatic {
+			pseudofield := &ast.Field{Type: s.Elt}
 			for idx := 0; idx < arrayLen; idx++ {
 				fsub := fmt.Sprintf("%s[%d]", pred, idx)
 				walkOne(b, pseudofield, fsub, funcname, fn, es)
 			}
-		} else {
-			walkOne(b, pseudofield, fsub, funcname, fn, es)
-			fmt.Fprintln(b, "}")
 		}
 		es.freeIndexStr()
 	default:
@@ -352,6 +397,7 @@ type StructInfo struct {
 }
 
 var structInfoMap map[string]*StructInfo
+var simpleStructMap map[string]*StructInfo
 
 func mergeInfo(parent, child *StructInfo, childcount int) {
 	if parent.firstSize == 0 {
@@ -397,6 +443,7 @@ func analyze(n interface{}) (info *StructInfo) {
 				seinfo := analyzeType(tname)
 				if seinfo != nil && seinfo.mustDispatch == false && seinfo.varLen == false {
 					mergeInfo(info, seinfo, 1)
+					simpleStructMap[tname] = seinfo
 				} else {
 					info.mustDispatch = true
 				}
@@ -508,61 +555,46 @@ func (bi *Binidl) structmap(out io.Writer, ts *ast.TypeSpec) {
 	fmt.Fprintf(out, "}\n")
 
 	mes := &EmitState{bigEndian: bi.bigEndian, op: MARSHAL}
-	if info.size < STATICMAX && !info.varLen && !info.mustDispatch {
-		mes.isStatic = true
-	}
-	blen := 8
-	if info.varLen {
+	blen := info.size
+	if info.varLen && blen < 10 {
 		blen = 10
 	}
-	if mes.isStatic {
-		blen = info.size
-	}
-	fmt.Fprintf(out, "func (t *%s) Marshal(wire io.Writer) {\n", typeName)
-	fmt.Fprintf(out, "var b [%d]byte\n", blen)
-	if !mes.isStatic {
-		fmt.Fprintf(out, "bs := b[:%d]\n", info.firstSize)
-	}
-	mes.curBSize = info.firstSize
-	walkContents(out, st, "t", "Marshal", marshalField, mes)
 
-	if mes.isStatic {
-		fmt.Fprintln(out, "wire.Write(b[:])")
+	fmt.Fprintf(out, "func (t *%s) Marshal(wire io.Writer) {\n", typeName)
+	if (blen > 0) {
+		fmt.Fprintf(out, "var b [%d]byte\n", blen)
+		if info.varLen {
+			fmt.Fprintf(out, "bs := b[:]\n")
+			mes.curBSize = blen
+		}
 	}
+	walkContents(out, st, "t", "Marshal", marshalField, mes, info.size > 0)
 	fmt.Fprintf(out, "}\n\n")
 
-	ues := &EmitState{bigEndian: bi.bigEndian, op: UNMARSHAL, curBSize: info.firstSize}
-	blen = 8
-	if info.varLen {
-		blen = 10
-	}
-	if info.size < 64 && !info.varLen && !info.mustDispatch {
-		ues.isStatic = true
-		blen = info.size
-	}
+	ues := &EmitState{bigEndian: bi.bigEndian, op: UNMARSHAL}
 	paramname := "wire"
 	if info.varLen {
 		paramname = "rr"
 	}
 	fmt.Fprintf(out, "func (t *%s) Unmarshal(%s io.Reader) error {\n", typeName, paramname)
-
 	if info.varLen {
 		fmt.Fprintln(out,
 			`var wire byteReader
-var ok bool
-if wire, ok = rr.(byteReader); !ok {
-    wire = bufio.NewReader(rr)
-}`)
+			var ok bool
+			if wire, ok = rr.(byteReader); !ok {
+				wire = bufio.NewReader(rr)
+			}`)
 	}
-	fmt.Fprintf(out, "var b [%d]byte\n", blen)
-	if ues.isStatic {
+	if blen > 0 {
+		fmt.Fprintf(out, "var b [%d]byte\n", blen)
 		fmt.Fprintf(out, "bs := b[:]\n")
-		fmt.Fprintf(out, "if _, err := io.ReadAtLeast(wire, bs, %d); err != nil {\n", blen)
-		fmt.Fprintf(out, "return err\n}\n")
-	} else {
-		fmt.Fprintf(out, "bs := b[:%d]\n", info.firstSize)
+		ues.curBSize = blen
+		if info.size > 0 {
+			fmt.Fprintf(out, "if _, err := io.ReadAtLeast(wire, bs, %d); err != nil {\n", info.size)
+			fmt.Fprintf(out, "return err\n}\n")
+		}
 	}
-	walkContents(out, st, "t", "Unmarshal", unmarshalField, ues)
+	walkContents(out, st, "t", "Unmarshal", unmarshalField, ues, false)
 	fmt.Fprintf(out, "return nil\n}\n\n")
 }
 
@@ -580,6 +612,7 @@ func createGlobalDeclMap(decls []ast.Decl) {
 func (bf *Binidl) PrintGo() {
 	createGlobalDeclMap(bf.ast.Decls) // still a temporary hack
 	rest := new(bytes.Buffer)
+	simpleStructMap = make(map[string]*StructInfo)
 	for _, d := range globalDeclMap {
 		bf.structmap(rest, d)
 	}
@@ -596,6 +629,9 @@ func (bf *Binidl) PrintGo() {
 	imports := []string{"io", "sync"}
 	if need_bufio {
 		imports = append(imports, "bufio")
+	}
+	if need_binary {
+		imports = append(imports, "encoding/binary")
 	}
 	fmt.Fprintln(tf, "import (")
 	for _, imp := range imports {
