@@ -413,7 +413,7 @@ func mergeInfo(parent, child *StructInfo, childcount int) {
 	if parent.contiguous[crt] > parent.maxContiguous {
 		parent.maxContiguous = parent.contiguous[crt]
 	}
-	if child.mustDispatch || child.varLen {
+	if (child.mustDispatch || child.varLen) && parent.contiguous[crt] > 0 {
 		parent.contiguous = append(parent.contiguous, 0)
 	}
 	
