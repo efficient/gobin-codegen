@@ -1,0 +1,11 @@
+To run tests: 
+
+make clean
+make
+go test
+
+(This is a little awkward because the code gen has to be run
+first in order to run the tests.
+
+Note that errors may arise when you run make *or* when you run
+go test!)
