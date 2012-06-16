@@ -1,18 +1,18 @@
 package encodedemo
 
-type IsEmbedded struct {
+type IsEmbedded2 struct {
 	X int
-    Z AlsoEmbedded
+    Z AlsoEmbedded2
 	Y int
 }
 
-type AlsoEmbedded struct {
+type AlsoEmbedded2 struct {
     X int
     Y int
 }
 
-type HasEmbedded struct {
+type HasEmbedded2 struct {
 	A int
 	B int
-	C IsEmbedded
+	C IsEmbedded2
 }
