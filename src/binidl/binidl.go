@@ -508,9 +508,10 @@ func analyzeType(typeName string) (info *StructInfo) {
 
 	if id, ok := ts.Type.(*ast.Ident); ok {
 		tname := id.Name
-		if _, ok := typedb[tname]; ok {
+		if ti, ok := typedb[tname]; ok {
 			typemap[typeName] = tname
-			return
+			info = &StructInfo{size: ti.Size, maxSize: ti.Size, maxContiguous: ti.Size, totalSize: ti.Size}
+			return info
 		}
 	}
 	panic("Can't handle decl: " + typeName)
