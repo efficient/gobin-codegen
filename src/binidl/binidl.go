@@ -87,7 +87,7 @@ func unmarshalField(b io.Writer, fname, tname string, es *EmitState) {
 			fmt.Fprintf(b, "%s = %s(%s(b[%d:%d]))\n", fname, tname, df, bstart, bstart+ti.Size)
 		}
 	}
-	if es.contiguous[es.crt] == es.staticOffset {
+	if es.contiguous[es.crt] == es.staticOffset && es.staticOffset > 0 {
 		es.crt++
 		es.staticOffset = 0
 	}
@@ -114,11 +114,11 @@ func marshalField(b io.Writer, fname, tname string, es *EmitState) {
 			setbs(b, es.contiguous[es.crt], es)
 		}
 	}
-	
+
 	ilef, found := inlineEncode[ti.EncodesAs]
 	if found {
 		fmt.Fprintf(b, "%s\n", ilef(encodefrom, bstart, fname, es))
-	} else { 
+	} else {
 		need_binary = true
 		endian := "Little"
 		if es.bigEndian {
@@ -135,7 +135,7 @@ func marshalField(b io.Writer, fname, tname string, es *EmitState) {
 	if es.resetBuffer || (es.contiguous[es.crt] == es.staticOffset && es.staticOffset > 0) {
 		fmt.Fprintln(b, "wire.Write(bs)")
 	}
-	if es.contiguous[es.crt] == es.staticOffset {
+	if es.contiguous[es.crt] == es.staticOffset && es.staticOffset > 0 {
 		es.crt++
 		es.staticOffset = 0
 	}
@@ -161,6 +161,7 @@ type EmitState struct {
 	staticOffset	int
 	alenIdx			int
 	curBSize		int
+    blen            int
 	bigEndian		bool // TODO:  This is duplicated now... integrate better.
 	tmp32exists		bool
 	tmp64exists		bool
@@ -355,6 +356,7 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 			} else {
 				//setbs(b, 10, es, false)
 				fmt.Fprintf(b, "bs = b[:]\n")
+                es.curBSize = es.blen
 				fmt.Fprintf(b, "%s := int64(len(%s))\n", alenid, pred)
 				fmt.Fprintf(b, "if wlen := binary.PutVarint(bs, %s); wlen >= 0 {\n", alenid)
 				fmt.Fprintf(b, "wire.Write(b[0:wlen])\n")
@@ -416,7 +418,7 @@ func mergeInfo(parent, child *StructInfo, childcount int) {
 	if (child.mustDispatch || child.varLen) && parent.contiguous[crt] > 0 {
 		parent.contiguous = append(parent.contiguous, 0)
 	}
-	
+
 	if child.maxSize > parent.maxSize {
 		parent.maxSize = child.maxSize
 	}
@@ -569,11 +571,12 @@ func (bi *Binidl) structmap(out io.Writer, ts *ast.TypeSpec) {
 	fmt.Fprintf(out, "p.mu.Unlock()\n")
 	fmt.Fprintf(out, "}\n")
 
-	mes := &EmitState{bigEndian: bi.bigEndian, op: MARSHAL, contiguous: info.contiguous}
 	blen := info.maxContiguous
 	if info.varLen && blen < 10 {
 		blen = 10
 	}
+
+   	mes := &EmitState{bigEndian: bi.bigEndian, op: MARSHAL, contiguous: info.contiguous, blen: blen}
 
 	fmt.Fprintf(out, "func (t *%s) Marshal(wire io.Writer) {\n", typeName)
 	if (blen > 0) {
@@ -584,7 +587,7 @@ func (bi *Binidl) structmap(out io.Writer, ts *ast.TypeSpec) {
 	walkContents(out, st, "t", "Marshal", marshalField, mes)
 	fmt.Fprintf(out, "}\n\n")
 
-	ues := &EmitState{bigEndian: bi.bigEndian, op: UNMARSHAL, contiguous: info.contiguous}
+	ues := &EmitState{bigEndian: bi.bigEndian, op: UNMARSHAL, contiguous: info.contiguous, blen: blen}
 	paramname := "wire"
 	if info.varLen {
 		paramname = "rr"
