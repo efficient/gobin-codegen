@@ -352,7 +352,11 @@ func walkOne(b io.Writer, f *ast.Field, pred string, funcname string, fn func(io
 				fmt.Fprintf(b, "if err != nil {\n")
 				fmt.Fprintf(b, "return err\n")
 				fmt.Fprintf(b, "}\n")
-				fmt.Fprintf(b, "%s = make([]%s, %s)\n", pred, s.Elt, alenid)
+                if se, ok := s.Elt.(*ast.SelectorExpr); ok {
+                    fmt.Fprintf(b, "%s = make([]%s.%s, %s)\n", pred, se.X, se.Sel, alenid)
+                } else {
+                    fmt.Fprintf(b, "%s = make([]%s, %s)\n", pred, s.Elt, alenid)
+                }
 			} else {
 				//setbs(b, 10, es, false)
 				fmt.Fprintf(b, "bs = b[:]\n")
@@ -635,6 +639,14 @@ func (bf *Binidl) PrintGo() {
 	tfname := tf.Name()
 	defer os.Remove(tfname)
 	defer tf.Close()
+
+    defer func() {
+        if r := recover(); r != nil {
+            fmt.Println("Panic when parsing generated output: ", r)
+            fmt.Println("Generated output in temporary file ", tfname)
+            os.Exit(-1)
+        }
+    }()
 
 	fmt.Fprintln(tf, "package", bf.ast.Name.Name)
 	imports := []string{"io", "sync"}
