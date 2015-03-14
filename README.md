@@ -9,7 +9,7 @@ BenchmarkGeneratedMarshal       10000000               223 ns/op
 
 Operation: Takes a file with go structs as input:
 
-```
+```golang
 package duck
 
 type Quack struct {
@@ -20,12 +20,12 @@ type Quack struct {
 
 Run as:
 
-```
+```sh
 bin/bi duck_decl.go > duck_marshal.go
 ```
 and outputs go code that does the same thing that binary.Write would do, but faster:
 
-```
+```golang
 package duck
 
 func (t *Quack) Marshal(w io.Writer) {
@@ -37,7 +37,7 @@ func (t *Quack) Marshal(w io.Writer) {
 ```
 You can use these stubs in your own code:
 
-```
+```golang
     q := &Quack{X: 1, Y: 2}
     buf := new bytes.Buffer
     if err := q.Marshal(buf) {
@@ -70,7 +70,7 @@ length slices.  If you use a slice type, your binary output
 will not be compatible with stock encoding/binary any more.
 
 use:
-```
+```sh
   export GOPATH=`/bin/pwd`
   go install bi
   bin/bi /path/to/your/go/struct/decl.go > generated_code.go
