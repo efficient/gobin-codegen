@@ -9,7 +9,7 @@ BenchmarkGeneratedMarshal       10000000               223 ns/op
 
 Operation: Takes a file with go structs as input:
 
-```golang
+```go
 package duck
 
 type Quack struct {
@@ -25,7 +25,7 @@ bin/bi duck_decl.go > duck_marshal.go
 ```
 and outputs go code that does the same thing that binary.Write would do, but faster:
 
-```golang
+```go
 package duck
 
 func (t *Quack) Marshal(w io.Writer) {
@@ -37,7 +37,7 @@ func (t *Quack) Marshal(w io.Writer) {
 ```
 You can use these stubs in your own code:
 
-```golang
+```go
     q := &Quack{X: 1, Y: 2}
     buf := new bytes.Buffer
     if err := q.Marshal(buf) {
